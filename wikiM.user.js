@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Wiki-Masters - Améliorations de l'interface V16
+// @name         Wiki-Masters - Améliorations de l'interface V17
 // @namespace    http://tampermonkey.net/
-// @version      2.5
-// @description  Menu déroulant d'étiquettes personnalisé directement sur la carte.
+// @version      2.6
+// @description  Menu étiquettes fluide et bouclier anti-clic React.
 // @author       Ton Développeur
 // @match        https://www.wiki-masters.com/*
 // @grant        GM_addStyle
@@ -14,18 +14,16 @@
     // --- STOCKAGE GLOBAL ---
     window.wmPrices = {};
     window.wmAuth = { apikey: "", token: "" };
-    window.wmTags = {}; // Ex: { "A vendre": { id: "...", color: "rgb(167, 139, 250)" } }
+    window.wmTags = {}; 
 
     GM_addStyle(`
-        /* Panneau de droite */
         .wm-actions-wrapper {
-            position: absolute; top: 10px; right: 10px; z-index: 40;
+            position: absolute; top: 10px; right: 10px; z-index: 50;
             display: flex; flex-direction: column; gap: 8px;
         }
 
-        /* Conteneur d'étiquette à gauche */
         .wm-tag-wrapper {
-            position: absolute; top: 38px; left: 8px; z-index: 50;
+            position: absolute; top: 38px; left: 8px; z-index: 60;
             display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
         }
 
@@ -46,12 +44,11 @@
         .wm-btn-tag:hover { background-color: rgba(79, 70, 229, 1); transform: scale(1.1); }
         .wm-btn-tag svg { width: 16px; height: 16px; }
 
-        /* Le nouveau menu déroulant personnalisé */
         .wm-tag-dropdown {
             width: 160px; max-height: 180px; overflow-y: auto;
             background-color: var(--color-background, rgb(13, 17, 23));
             border: 1px solid var(--color-border, rgba(255,255,255,0.2));
-            border-radius: 8px; padding: 4px; z-index: 60;
+            border-radius: 8px; padding: 4px; z-index: 70;
             box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
             display: none; flex-direction: column; gap: 2px;
         }
@@ -94,14 +91,22 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
     `);
 
-    // --- FERMETURE DU MENU AU CLIC EXTERNE ---
+    // --- BOUCLIER ANTI-REACT ---
+    // Empêche tous les types de clics de traverser nos boutons pour atteindre la carte
+    function blockReactEvents(element) {
+        ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(evt => {
+            element.addEventListener(evt, (e) => {
+                e.stopPropagation();
+            });
+        });
+    }
+
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.wm-tag-wrapper')) {
             document.querySelectorAll('.wm-tag-dropdown.show').forEach(d => d.classList.remove('show'));
         }
     });
 
-    // --- INTERCEPTION API ---
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         const url = args[0] instanceof Request ? args[0].url : args[0];
@@ -126,17 +131,12 @@
                 }).catch(() => {});
             }
             
-            // On intercepte et stocke la liste complète de tes étiquettes
             if (url && url.includes('/rest/v1/tags?select=')) {
                 const clone = response.clone();
                 clone.json().then(data => {
                     if (Array.isArray(data)) {
                         data.forEach(tag => {
-                            // On essaie de sauvegarder la couleur si l'API la fournit, sinon violet par défaut
-                            window.wmTags[tag.name] = { 
-                                id: tag.id, 
-                                color: tag.color || '#a78bfa' 
-                            };
+                            window.wmTags[tag.name] = { id: tag.id, color: tag.color || '#a78bfa' };
                         });
                     }
                 }).catch(() => {});
@@ -146,7 +146,6 @@
         return response;
     };
 
-    // --- REQUÊTE FANTÔME D'ÉTIQUETAGE ---
     window.assignTagToCard = async function(cardUuid, tagName) {
         if (!window.wmAuth.apikey || !window.wmAuth.token) return false;
         const tagData = window.wmTags[tagName];
@@ -242,7 +241,6 @@
     }
 
     function handleQuickDiscard(event) {
-        event.stopPropagation();
         event.preventDefault();
         
         const myBtn = event.currentTarget;
@@ -285,7 +283,6 @@
     }
 
     function handleQuickAuction(event) {
-        event.stopPropagation();
         event.preventDefault();
         const cardContainer = event.target.closest('.w-72');
         if (!cardContainer) return;
@@ -314,6 +311,7 @@
             // --- DROITE : Défausse & Enchères ---
             const actionWrapper = document.createElement('div');
             actionWrapper.className = 'wm-actions-wrapper';
+            blockReactEvents(actionWrapper); // On applique le bouclier anti-React
 
             const discardBtn = document.createElement('button');
             discardBtn.className = 'wm-action-btn wm-btn-discard';
@@ -334,6 +332,7 @@
             // --- GAUCHE : Étiquettes (Menu Personnalisé) ---
             const tagWrapper = document.createElement('div');
             tagWrapper.className = 'wm-tag-wrapper';
+            blockReactEvents(tagWrapper); // On applique le bouclier anti-React
             
             const tagBtn = document.createElement('button');
             tagBtn.className = 'wm-action-btn wm-btn-tag';
@@ -345,9 +344,7 @@
 
             tagBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
                 
-                // Fermer les autres menus ouverts
                 document.querySelectorAll('.wm-tag-dropdown.show').forEach(d => {
                     if (d !== tagDropdown) d.classList.remove('show');
                 });
@@ -355,7 +352,7 @@
                 tagDropdown.classList.toggle('show');
                 
                 if (tagDropdown.classList.contains('show')) {
-                    tagDropdown.innerHTML = ''; // Nettoyer
+                    tagDropdown.innerHTML = ''; 
                     const tagNames = Object.keys(window.wmTags);
                     
                     if (tagNames.length === 0) {
@@ -369,7 +366,7 @@
                             
                             btn.onclick = async (evt) => {
                                 evt.stopPropagation();
-                                btn.textContent = "⏳..."; // Indicateur visuel
+                                btn.textContent = "⏳..."; 
                                 const uuid = findCardIdInReact(card);
                                 if (uuid) {
                                     const success = await window.assignTagToCard(uuid, name);
@@ -378,7 +375,6 @@
                                     } else {
                                         btn.textContent = "❌ Erreur";
                                     }
-                                    // Fermer le menu après 1 seconde
                                     setTimeout(() => tagDropdown.classList.remove('show'), 1000);
                                 }
                             };
