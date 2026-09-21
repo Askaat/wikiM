@@ -5,6 +5,8 @@
 // @description  Prix du marché, anti-double-clic, tokens et bouton d'étiquetage manuel.
 // @author       Ton Développeur
 // @match        https://www.wiki-masters.com/*
+// @updateURL    https://github.com/Askaat/wikiM/raw/refs/heads/main/wikiM.user.js
+// @downloadURL  https://github.com/Askaat/wikiM/raw/refs/heads/main/wikiM.user.js
 // @grant        GM_addStyle
 // ==/UserScript==
 
