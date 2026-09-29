@@ -3838,23 +3838,28 @@
             if (targetCard) {
                 const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
                 if (bulkBtn && !bulkBtn.disabled) {
+                    console.log("[WM-Debug] 🟢 Clic sur Bulk effectué.");
                     bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                 }
             }
             
-            // On tourne la page du paquet automatiquement
+            // On laisse 200ms (au lieu de 80) pour que le bouton Bulk devienne vert 
+            // et que l'Observer déverrouille son verrou de sécurité avant de tourner la page.
             setTimeout(() => {
+                console.log("[WM-Debug] ⏩ Passage à la carte suivante...");
                 const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
                 if (rightArrowSvg) {
                     rightArrowSvg.closest('button').click();
                 } else {
                     const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
-                    if (continueBtn) continueBtn.click();
+                    if (continueBtn) {
+                        console.log("[WM-Debug] 🏁 Fin du paquet, on clique sur Continuer.");
+                        continueBtn.click();
+                    }
                 }
-            }, 80);
+            }, 200); 
             return;
         }
-
         // ==========================================
         // 2. NAVIGATION DANS LA COLLECTION (Modal)
         // ==========================================
