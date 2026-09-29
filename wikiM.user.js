@@ -12,9 +12,9 @@
     const WM_PATCH_NOTES = [
         {
             version: "2.1.5",
-            date: "29/09/2026 - 09:50",
+            date: "29/09/2026 - 15:30",
             changes: [
-                "Fix des routines de trade + Ajout du tag auto lors des tirages"
+                "Fix des routines de trade + Ajout du tag auto lors des tirages + Fix de montant fantôme lors des tirages"
             ]
         },
         {
@@ -229,61 +229,81 @@
     };
 
     // ============================================================
-        // MOTEUR D'AUTO-TAGGING SUPABASE
-        // ============================================================
-        async function processAutoTags(pulledCards) {
-            const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
-            if (!isAutoTagEnabled || !pulledCards || pulledCards.length === 0) return;
+    // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent)
+    // ============================================================
+    async function processAutoTags(pulledCards) {
+        const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
+        if (!isAutoTagEnabled || !pulledCards || pulledCards.length === 0) return;
 
-            try {
-                console.log("[WM-Tags] 🏷️ Démarrage de l'Auto-Tagging...");
+        try {
+            console.log("[WM-Tags] 🏷️ Démarrage de l'Auto-Tagging intelligent...");
 
-                // 1. Récupération des user_card_id physiques (Les X dernières cartes obtenues)
-                const res = await fetch(`https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_cards?select=id,card_id&user_id=eq.${window.wmUserId}&order=obtained_at.desc&limit=${pulledCards.length}`, {
-                    headers: {
-                        "apikey": window.wmAuth.apikey,
-                        "authorization": window.wmAuth.token
-                    }
+            // 1. Récupération des user_card_id physiques (Les X dernières cartes obtenues)
+            const res = await fetch(`https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_cards?select=id,card_id&user_id=eq.${window.wmUserId}&order=obtained_at.desc&limit=${pulledCards.length}`, {
+                headers: {
+                    "apikey": window.wmAuth.apikey,
+                    "authorization": window.wmAuth.token
+                }
+            });
+
+            if (!res.ok) throw new Error("Impossible de récupérer les user_card_id");
+            const physicalCards = await res.json();
+
+            // 2. Chargement des règles de tags groupées
+            const tagGroups = JSON.parse(localStorage.getItem('wmTagGroups') || '[]');
+            const allRules = tagGroups.flatMap(g => g.rules || []);
+            if (allRules.length === 0) return;
+
+            // Utilitaire pour lire le prix moyen en cache
+            const getPrice = (title, rarity) => {
+                if (window.wmPrices && window.wmPrices[title] && window.wmPrices[title][rarity]) {
+                    return window.wmPrices[title][rarity].average || window.wmPrices[title][rarity] || 0;
+                }
+                return 0;
+            };
+
+            // 3. Croisement des données et envoi des requêtes
+            for (const pc of pulledCards) {
+                const physical = physicalCards.find(p => p.card_id === pc.id);
+                if (!physical) continue;
+
+                const searchStr = `${pc.wikipedia_title} ${pc.category}`.toLowerCase();
+                const price = getPrice(pc.wikipedia_title, pc.rarity);
+
+                // Chercher les règles qui matchent avec les conditions avancées
+                const applicableRules = allRules.filter(rule => {
+                    const kw = rule.keyword.toLowerCase().trim();
+
+                    if (kw.startsWith('prix>')) return price > parseInt(kw.replace('prix>', ''), 10);
+                    if (kw.startsWith('atk>')) return pc.atk > parseInt(kw.replace('atk>', ''), 10);
+                    if (kw.startsWith('def>')) return pc.def > parseInt(kw.replace('def>', ''), 10);
+                    if (kw.startsWith('rarete:')) return pc.rarity.toLowerCase() === kw.replace('rarete:', '');
+
+                    // Comportement par défaut (texte contenu dans titre/catégorie)
+                    return searchStr.includes(kw);
                 });
 
-                if (!res.ok) throw new Error("Impossible de récupérer les user_card_id");
-                const physicalCards = await res.json();
-
-                // 2. Chargement des règles de tags groupées
-                const tagGroups = JSON.parse(localStorage.getItem('wmTagGroups') || '[]');
-                const allRules = tagGroups.flatMap(g => g.rules || []);
-                if (allRules.length === 0) return;
-
-                // 3. Croisement des données et envoi des requêtes
-                for (const pc of pulledCards) {
-                    const physical = physicalCards.find(p => p.card_id === pc.id);
-                    if (!physical) continue;
-
-                    // Chercher les règles qui matchent
-                    const searchStr = `${pc.wikipedia_title} ${pc.category}`.toLowerCase();
-                    const applicableRules = allRules.filter(rule => searchStr.includes(rule.keyword.toLowerCase()));
-
-                    // Envoi des tags un par un
-                    for (const rule of applicableRules) {
-                        await fetch("https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_card_tags", {
-                            method: "POST",
-                            headers: {
-                                "content-type": "application/json",
-                                "apikey": window.wmAuth.apikey,
-                                "authorization": window.wmAuth.token
-                            },
-                            body: JSON.stringify({
-                                user_card_id: physical.id,
-                                tag_id: rule.tagId
-                            })
-                        });
-                        console.log(`[WM-Tags] ✅ Tag appliqué : ${rule.keyword} sur ${pc.wikipedia_title}`);
-                    }
+                // Envoi des tags un par un
+                for (const rule of applicableRules) {
+                    await fetch("https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_card_tags", {
+                        method: "POST",
+                        headers: {
+                            "content-type": "application/json",
+                            "apikey": window.wmAuth.apikey,
+                            "authorization": window.wmAuth.token
+                        },
+                        body: JSON.stringify({
+                            user_card_id: physical.id,
+                            tag_id: rule.tagId
+                        })
+                    });
+                    console.log(`[WM-Tags] ✅ Tag appliqué : ${rule.keyword} sur ${pc.wikipedia_title}`);
                 }
-            } catch (e) {
-                console.error("[WM-Tags] ❌ Erreur d'Auto-Tagging :", e);
             }
+        } catch (e) {
+            console.error("[WM-Tags] ❌ Erreur d'Auto-Tagging :", e);
         }
+    }
 
     // ============================================================
     // WRAPPER DE RETRY GÉNÉRIQUE
@@ -2311,42 +2331,56 @@
     }
 
     // ============================================================
-    // PRIX EN CACHE
+    // PRIX EN CACHE (Avec Retry 3 essais + Erreur UI)
     // ============================================================
-    async function fetchPricesBackground(uuid, cardTitle) {
+    async function fetchPricesBackground(uuid, cardTitle, attempt = 1) {
         if (!uuid || !cardTitle) return;
 
         const now = Date.now();
         const timestamp = window.wmPriceTimestamps[cardTitle] || 0;
         const isStale = (now - timestamp) > 259200000; // 24h
 
-        if (window.wmFetching.has(uuid)) return;
-        if (window.wmPrices[cardTitle] && window.wmPrices[cardTitle] !== "LOADING" && !isStale) return;
+        // Si on a déjà une requête en cours, ou si le prix est valide et frais
+        if (attempt === 1 && window.wmFetching.has(uuid)) return;
+        if (attempt === 1 && window.wmPrices[cardTitle] && window.wmPrices[cardTitle] !== "LOADING" && window.wmPrices[cardTitle] !== "ERROR" && !isStale) return;
 
-        window.wmFetching.add(uuid);
-        if (!window.wmPrices[cardTitle]) {
-            window.wmPrices[cardTitle] = "LOADING";
+        if (attempt === 1) {
+            window.wmFetching.add(uuid);
+            if (!window.wmPrices[cardTitle] || window.wmPrices[cardTitle] === "ERROR") {
+                window.wmPrices[cardTitle] = "LOADING";
+            }
+            renderPricesOnAllCards();
         }
-        renderPricesOnAllCards();
 
         try {
-            const res = await originalFetch(`https://www.wiki-masters.com/api/marketplace/cards/${uuid}/sales?scope=summary`, {
+            const fetcher = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            const res = await fetcher(`https://www.wiki-masters.com/api/marketplace/cards/${uuid}/sales?scope=summary`, {
                 credentials: "include", method: "GET", headers: { "Accept": "application/json" }
             });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
             const data = await res.json();
             const hasSales = data && data.wikipedia_title && Object.keys(data.summary || {}).length > 0;
             const finalData = hasSales ? data.summary : "EMPTY";
+
             wmSavePriceToCache(cardTitle, finalData);
-        } catch (e) {
-            if (!window.wmPrices[cardTitle] || window.wmPrices[cardTitle] === "LOADING") {
-                window.wmPrices[cardTitle] = "ERROR";
-            }
             window.wmFetching.delete(uuid);
             renderPricesOnAllCards();
-            throw e;
+
+        } catch (e) {
+            console.error(`[WM-Price] ⚠️ Échec prix pour ${cardTitle} (Essai ${attempt}/3):`, e.message);
+
+            if (attempt < 3) {
+                // Retry avec délai progressif (1s, puis 1.5s...)
+                setTimeout(() => fetchPricesBackground(uuid, cardTitle, attempt + 1), 1000 + (attempt * 500));
+            } else {
+                console.error(`[WM-Price] ❌ Abandon pour ${cardTitle} après 3 essais.`);
+                window.wmPrices[cardTitle] = "ERROR";
+                window.wmFetching.delete(uuid);
+                renderPricesOnAllCards();
+            }
         }
-        window.wmFetching.delete(uuid);
-        renderPricesOnAllCards();
     }
 
     // ============================================================
