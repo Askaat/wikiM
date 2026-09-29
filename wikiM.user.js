@@ -1406,6 +1406,26 @@
         .wm-patch-date { font-family: monospace; color: #94a3b8; font-size: 10px; }
         .wm-patch-changes { margin: 0; padding-left: 16px; font-size: 11px; color: #cbd5e1; }
         .wm-patch-changes li { margin-bottom: 4px; line-height: 1.3; }
+
+        /* ===== Smart Trade ===== */
+        .wm-trade-container { display: flex; gap: 8px; margin-bottom: 12px; }
+        .wm-trade-side { flex: 1; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .wm-trade-header { font-size: 11px; color: #cbd5e1; font-weight: 700; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 4px; }
+        .wm-trade-val { color: #fbbf24; font-family: monospace; }
+        .wm-trade-list { flex: 1; min-height: 60px; max-height: 120px; overflow-y: auto; background: rgba(15, 23, 42, 0.5); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+        .wm-trade-item { display: flex; justify-content: space-between; align-items: center; background: rgba(51, 65, 85, 0.8); padding: 4px 6px; border-radius: 4px; font-size: 10px; color: #e5e7eb; }
+        .wm-trade-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
+        .wm-trade-item-remove { color: #ef4444; cursor: pointer; font-weight: bold; padding: 0 4px; }
+        .wm-trade-item-remove:hover { color: #f87171; }
+        
+        /* Collection Browser (Superposé) */
+        #wm-trade-browser { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.98); z-index: 10; display: none; flex-direction: column; padding: 12px; }
+        #wm-trade-browser.show { display: flex; animation: fadeIn 0.15s; }
+        .wm-browser-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; overflow-y: auto; flex: 1; margin: 8px 0; padding-right: 4px; }
+        .wm-browser-card { background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 6px; padding: 6px; text-align: center; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; gap: 4px; }
+        .wm-browser-card:hover { transform: scale(1.02); background: rgba(51, 65, 85, 0.9); }
+        .wm-browser-card.selected { border-color: #10b981; background: rgba(16, 185, 129, 0.2); }
+        .wm-browser-pagination { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-family: monospace; }
     `);
 
     // ============================================================
@@ -3403,6 +3423,10 @@
                     <span class="wm-tab-icon">🏷️</span>
                     <span>Tags</span>
                 </button>
+                <button class="wm-tab" data-tab="trade">
+                    <span class="wm-tab-icon">🤝</span>
+                    <span>Trade</span>
+                </button>
                 <button class="wm-tab" data-tab="prefs">
                     <span class="wm-tab-icon">⚙️</span>
                     <span>Préfs</span>
@@ -3505,6 +3529,68 @@
                     <div style="display:flex;gap:6px;">
                         <button id="wm-tag-pause-btn" class="wm-panel-btn ghost" style="flex:1;display:none;">⏸️ Pause</button>
                         <button id="wm-tag-cancel-btn" class="wm-panel-btn ghost" style="flex:1;display:none;">⏹️ Annuler</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ONGLET SMART TRADE -->
+            <div class="wm-tab-content hidden" data-tab="trade" style="position: relative;">
+                
+                <div class="wm-section-title">Nouvel Échange Intelligent</div>
+                
+                <div class="wm-input-group" style="margin-bottom:12px;">
+                    <select id="wm-trade-friend-select" class="wm-panel-input">
+                        <option value="">⏳ Chargement des amis...</option>
+                    </select>
+                </div>
+
+                <div class="wm-trade-container">
+                    <!-- Colonne MOI -->
+                    <div class="wm-trade-side">
+                        <div class="wm-trade-header">
+                            <span>Moi</span>
+                            <span class="wm-trade-val" id="wm-my-trade-val">0 WB</span>
+                        </div>
+                        <div class="wm-trade-list" id="wm-my-trade-list">
+                            <!-- Les cartes s'ajouteront ici -->
+                        </div>
+                        <button class="wm-panel-btn ghost" id="wm-btn-browse-me" style="padding:4px; font-size:10px;">+ Parcourir ma collection</button>
+                        <input type="number" id="wm-my-trade-wb" class="wm-panel-input" placeholder="Ajouter WB" style="padding:4px; margin-top:2px;">
+                    </div>
+
+                    <!-- Colonne AMI -->
+                    <div class="wm-trade-side">
+                        <div class="wm-trade-header">
+                            <span>L'ami</span>
+                            <span class="wm-trade-val" id="wm-their-trade-val">0 WB</span>
+                        </div>
+                        <div class="wm-trade-list" id="wm-their-trade-list">
+                            <!-- Les cartes s'ajouteront ici -->
+                        </div>
+                        <button class="wm-panel-btn ghost" id="wm-btn-browse-them" style="padding:4px; font-size:10px;" disabled>+ Parcourir sa collection</button>
+                        <input type="number" id="wm-their-trade-wb" class="wm-panel-input" placeholder="Demander WB" style="padding:4px; margin-top:2px;" disabled>
+                    </div>
+                </div>
+
+                <button id="wm-trade-send-btn" class="wm-panel-btn" style="width: 100%;" disabled>Envoyer l'offre (Écart : - WB)</button>
+
+                <!-- NAVIGATEUR DE COLLECTION (Caché par défaut) -->
+                <div id="wm-trade-browser">
+                    <div class="wm-panel-header" style="padding: 0 0 8px 0; background: none; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <span class="wm-panel-header-title" id="wm-browser-title">Collection</span>
+                        <button class="wm-panel-close" id="wm-browser-close">✕</button>
+                    </div>
+                    
+                    <input type="text" id="wm-browser-search" class="wm-panel-input" placeholder="Chercher une carte..." style="margin-top:8px;">
+                    
+                    <div class="wm-browser-grid" id="wm-browser-grid">
+                        <div class="wm-tracked-empty" style="grid-column: span 2;">Chargement de la page...</div>
+                    </div>
+
+                    <div class="wm-browser-pagination">
+                        <button class="wm-panel-btn ghost" id="wm-browser-prev" style="padding: 4px 8px;">← Préc.</button>
+                        <span id="wm-browser-page-info">Page 1 / ?</span>
+                        <button class="wm-panel-btn ghost" id="wm-browser-next" style="padding: 4px 8px;">Suiv. →</button>
                     </div>
                 </div>
             </div>
