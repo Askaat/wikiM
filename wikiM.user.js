@@ -3095,13 +3095,72 @@
     /**
  * Navigue vers l'index cible dans la liste des cartes.
  */
-    function navigateToCardIndex(targetIdx) {
+        function navigateToCardIndex(targetIdx) {
         const cards = getCollectionCards();
+        
+        // --- GESTION DU CHANGEMENT DE PAGE ---
         if (targetIdx < 0 || targetIdx >= cards.length) {
-            console.log('[WM-Nav] 🛑 Fin de la liste.');
+            const isNext = targetIdx >= cards.length;
+            const btnText = isNext ? 'Suivant →' : '← Précédent';
+            
+            // Recherche du bouton de pagination actif
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const targetBtn = buttons.find(b => b.textContent.trim() === btnText && !b.disabled);
+
+            if (!targetBtn) {
+                console.log(`[WM-Nav] 🛑 Fin de la liste, et page ${isNext ? 'suivante' : 'précédente'} indisponible.`);
+                return;
+            }
+
+            console.log(`[WM-Nav] 🔄 Changement de page : clic sur "${btnText}"...`);
+            
+            // 1) Fermer le modal actuel
+            closeCardModal();
+
+            // 2) Mémoriser la première carte pour détecter le rechargement de la grille par React
+            const oldFirstCard = cards[0];
+
+            // 3) Déclencher le changement de page
+            targetBtn.click();
+
+            // 4) Attendre que la grille se mette à jour
+            let pageAttempts = 0;
+            const waitForPage = setInterval(() => {
+                pageAttempts++;
+                const freshCards = getCollectionCards();
+                
+                // La page a changé si le premier élément du DOM est différent
+                if (freshCards.length > 0 && (freshCards[0] !== oldFirstCard || pageAttempts > 20)) {
+                    clearInterval(waitForPage);
+                    
+                    // Cible la première carte (si on avance) ou la dernière (si on recule)
+                    const newTargetIdx = isNext ? 0 : freshCards.length - 1;
+                    const newTargetCard = freshCards[newTargetIdx];
+                    const newTargetTitle = getCardTitleFromEl(newTargetCard);
+                    
+                    if (newTargetCard) {
+                        newTargetCard.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        
+                        setTimeout(() => {
+                            const clickable = newTargetCard.querySelector('img') 
+                                || newTargetCard.querySelector('[role="button"]') 
+                                || newTargetCard;
+                            clickable.click();
+                            
+                            wmCurrentCardIndex = newTargetIdx;
+                            wmCurrentCardTitle = newTargetTitle;
+                            console.log(`[WM-Nav] ✅ Nouvelle page chargée, ouverture de "${newTargetTitle}"`);
+                        }, 150);
+                    }
+                } else if (pageAttempts > 40) {
+                    clearInterval(waitForPage); // Sécurité anti-boucle
+                }
+            }, 50);
+
             return;
         }
 
+        // --- NAVIGATION NORMALE (Même page) ---
         const targetCard = cards[targetIdx];
         const targetTitle = getCardTitleFromEl(targetCard);
         console.log(`[WM-Nav] ➡️ Navigation vers index ${targetIdx} / ${cards.length} : "${targetTitle}"`);
@@ -3121,7 +3180,6 @@
                 targetCard.scrollIntoView({ behavior: 'auto', block: 'center' });
 
                 setTimeout(() => {
-                    // Le onClick React est sur l'<img> interne, pas sur le div racine
                     const clickable = targetCard.querySelector('img')
                     || targetCard.querySelector('[role="button"]')
                     || targetCard;
@@ -3133,51 +3191,6 @@
             }
         }, 50);
     }
-
-    // ---- Capture du clic initial sur une carte ----
-    // On utilise la phase capture (true) pour être sûr d'avoir l'info
-    // avant que React ne fasse quoi que ce soit.
-    document.addEventListener('click', (e) => {
-        const cardEl = e.target.closest(WM_CARD_SELECTOR);
-        if (!cardEl) return;
-
-        const cards = getCollectionCards();
-        const idx = cards.indexOf(cardEl);
-        if (idx === -1) return;
-
-        wmCurrentCardIndex = idx;
-        wmCurrentCardTitle = getCardTitleFromEl(cardEl);
-        console.log(`[WM-Nav] 📌 Carte cliquée : index ${idx} / ${cards.length} — "${wmCurrentCardTitle}"`);
-    }, true);
-
-    // ---- Gestion des flèches clavier ----
-    document.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-
-        const modal = getOpenCardModal();
-        if (!modal) return; // Pas de modal ouvert → on laisse le comportement natif
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Si on n'a pas d'index courant (ex: rechargement de la page), on le retrouve par titre
-        if (wmCurrentCardIndex === -1 && modal.title) {
-            const cards = getCollectionCards();
-            const idx = cards.findIndex(c => getCardTitleFromEl(c) === modal.title);
-            if (idx !== -1) {
-                wmCurrentCardIndex = idx;
-                wmCurrentCardTitle = modal.title;
-                console.log(`[WM-Nav] 🔄 Index retrouvé par titre : ${idx}`);
-            } else {
-                console.log(`[WM-Nav] ❌ Impossible de retrouver l'index pour "${modal.title}"`);
-                return;
-            }
-        }
-
-        const delta = e.key === 'ArrowRight' ? 1 : -1;
-        navigateToCardIndex(wmCurrentCardIndex + delta);
-    }, true);
 
     // ============================================================
     // TRADE HELPER
@@ -3778,15 +3791,27 @@
             return;
         }
 
-        if (e.ctrlKey && e.key.toLowerCase() === 'i') {
+        if (e.key.toLowerCase() === 'i') {
             e.preventDefault();
             const targetCard = document.querySelector('.w-72:hover') || document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72');
+            
             if (targetCard) {
                 const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
                 if (bulkBtn && !bulkBtn.disabled) {
                     bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                 }
             }
+            
+            setTimeout(() => {
+                const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
+                if (rightArrowSvg) {
+                    rightArrowSvg.closest('button').click();
+                } else {
+                    const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
+                    if (continueBtn) continueBtn.click();
+                }
+            }, 80);
+            
             return;
         }
 
