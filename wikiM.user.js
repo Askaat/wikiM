@@ -229,7 +229,7 @@
     };
 
     // ============================================================
-    // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent)
+    // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent & Anti-CORS)
     // ============================================================
     async function processAutoTags(pulledCards) {
         const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
@@ -238,66 +238,53 @@
         try {
             console.log("[WM-Tags] 🏷️ Démarrage de l'Auto-Tagging intelligent...");
 
-            // 1. Récupération des user_card_id physiques (Les X dernières cartes obtenues)
-            const res = await fetch(`https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_cards?select=id,card_id&user_id=eq.${window.wmUserId}&order=obtained_at.desc&limit=${pulledCards.length}`, {
-                headers: {
-                    "apikey": window.wmAuth.apikey,
-                    "authorization": window.wmAuth.token
-                }
-            });
+            // Récupération de l'ID utilisateur
+            const userId = (typeof W !== 'undefined' && W.wmUserId) ? W.wmUserId : window.wmUserId;
+            if (!userId) throw new Error("ID utilisateur introuvable.");
 
-            if (!res.ok) throw new Error("Impossible de récupérer les user_card_id");
-            const physicalCards = await res.json();
+            // 1. Récupération des user_card_id physiques
+            const physicalCards = await supabaseRequestWithRetry(
+                'GET',
+                `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
+            );
 
-            // 2. Chargement des règles de tags groupées
-            const tagGroups = JSON.parse(localStorage.getItem('wmTagGroups') || '[]');
-            const allRules = tagGroups.flatMap(g => g.rules || []);
-            if (allRules.length === 0) return;
+            if (!physicalCards || !Array.isArray(physicalCards)) throw new Error("Impossible de récupérer les cartes physiques.");
 
-            // Utilitaire pour lire le prix moyen en cache
-            const getPrice = (title, rarity) => {
-                if (window.wmPrices && window.wmPrices[title] && window.wmPrices[title][rarity]) {
-                    return window.wmPrices[title][rarity].average || window.wmPrices[title][rarity] || 0;
-                }
-                return 0;
-            };
+            // 2. Chargement de TES règles avancées (et non plus les anciens groupes)
+            const rules = JSON.parse(localStorage.getItem('wmTagRules') || '[]');
+            const activeRules = rules.filter(r => r.enabled !== false);
+            if (activeRules.length === 0) {
+                console.log("[WM-Tags] Aucune règle active trouvée.");
+                return;
+            }
 
             // 3. Croisement des données et envoi des requêtes
             for (const pc of pulledCards) {
                 const physical = physicalCards.find(p => p.card_id === pc.id);
                 if (!physical) continue;
 
-                const searchStr = `${pc.wikipedia_title} ${pc.category}`.toLowerCase();
-                const price = getPrice(pc.wikipedia_title, pc.rarity);
+                // Formatage de la carte pour qu'elle soit lisible par ton evaluateAllRules
+                const cardForEval = {
+                    id: pc.id,
+                    userCardId: physical.id,
+                    title: pc.wikipedia_title,
+                    rarity: pc.rarity,
+                    category: pc.category
+                };
 
-                // Chercher les règles qui matchent avec les conditions avancées
-                const applicableRules = allRules.filter(rule => {
-                    const kw = rule.keyword.toLowerCase().trim();
+                // On utilise ton moteur pour obtenir la liste des IDs de tags à appliquer
+                const desiredTagIds = evaluateAllRules(cardForEval, activeRules, window.wmPrices);
 
-                    if (kw.startsWith('prix>')) return price > parseInt(kw.replace('prix>', ''), 10);
-                    if (kw.startsWith('atk>')) return pc.atk > parseInt(kw.replace('atk>', ''), 10);
-                    if (kw.startsWith('def>')) return pc.def > parseInt(kw.replace('def>', ''), 10);
-                    if (kw.startsWith('rarete:')) return pc.rarity.toLowerCase() === kw.replace('rarete:', '');
-
-                    // Comportement par défaut (texte contenu dans titre/catégorie)
-                    return searchStr.includes(kw);
-                });
-
-                // Envoi des tags un par un
-                for (const rule of applicableRules) {
-                    await fetch("https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_card_tags", {
-                        method: "POST",
-                        headers: {
-                            "content-type": "application/json",
-                            "apikey": window.wmAuth.apikey,
-                            "authorization": window.wmAuth.token
-                        },
-                        body: JSON.stringify({
-                            user_card_id: physical.id,
-                            tag_id: rule.tagId
-                        })
+                // Envoi des tags un par un via l'API sécurisée du script
+                for (const tagId of desiredTagIds) {
+                    await supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
+                        user_card_id: physical.id,
+                        tag_id: tagId
                     });
-                    console.log(`[WM-Tags] ✅ Tag appliqué : ${rule.keyword} sur ${pc.wikipedia_title}`);
+
+                    // Récupération du nom du tag pour le log
+                    const tagName = window.wmTagsCache.find(t => t.id === tagId)?.name || 'Tag inconnu';
+                    console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${pc.wikipedia_title}`);
                 }
             }
         } catch (e) {
@@ -2201,22 +2188,33 @@
 
 
     // ============================================================
-    // INTERCEPTEUR Response.prototype.json
+    // INTERCEPTEUR Response.prototype.json (Packs & Balance)
     // ============================================================
     const originalResponseJson = Response.prototype.json;
     Response.prototype.json = function(...args) {
         return originalResponseJson.apply(this, args).then(data => {
             try {
+                // Détection de l'ouverture d'un pack
                 if (data && typeof data === 'object' && Array.isArray(data.cards) && data.cards.length > 0
                     && 'packs_remaining' in data && data.cards[0] && (data.cards[0].wikipedia_title || data.cards[0].title)) {
-                    console.log(`[WM-Pack] 🎴 Pack ouvert : ${data.cards.length} cartes — préchargement des prix...`);
+
+                    console.log(`[WM-Pack] 🎴 Pack ouvert : ${data.cards.length} cartes — lancement des routines...`);
                     logToPanel(`🎴 Pack ouvert : ${data.cards.length} cartes`);
+
+                    // 1. Lancement du scan des prix
                     data.cards.forEach((card, i) => {
                         const uuid = card.id;
                         const title = card.wikipedia_title || card.title;
                         if (uuid && title) setTimeout(() => fetchPricesBackground(uuid, title), i * 120);
                     });
+
+                    // 2. Lancement de l'Auto-Tag intelligent (1.5s après, le temps que la DB s'actualise)
+                    if (typeof processAutoTags === 'function') {
+                        setTimeout(() => processAutoTags(data.cards), 1500);
+                    }
                 }
+
+                // Détection de la mise à jour du solde
                 if (data && typeof data === 'object' && typeof data.wikibidous_balance === 'number' && data.username) {
                     recordBalance(data.wikibidous_balance, 'passive');
                 }
@@ -2249,22 +2247,6 @@
         const response = await originalFetch.apply(this, args);
 
         try {
-            // ---> INTERCEPTION DES PACKS (Pour l'Auto-Tag et les prix) <---
-            if (url && (url.includes('api/packs/') || url.includes('sync_profile_packs')) && options.method === 'POST') {
-                const clone = response.clone();
-                clone.json().then(data => {
-                    const pulledCards = data.cards || data;
-                    if (Array.isArray(pulledCards)) {
-                        console.log("[WM-Pack] 🎴 Pack ouvert intercepté !");
-
-                        // Lancement de l'auto-tag après 1.5s (le temps que Supabase enregistre les cartes)
-                        setTimeout(() => {
-                            if (typeof processAutoTags === 'function') processAutoTags(pulledCards);
-                        }, 1500);
-                    }
-                }).catch(() => {});
-            }
-
             // Interception des prix du marché
             if (url && url.includes('sales?scope=summary')) {
                 const clone = response.clone();
@@ -4902,6 +4884,13 @@
         if (window.wmTagsCache.length === 0) {
             try { await wmFetchTags(); } catch(e) { console.warn('[WM-Tags] fetch échoué:', e); }
         }
+
+        // ---> FIX: Restauration de l'état de la checkbox Auto-Tag au démarrage <---
+        const autoTagCheckbox = document.getElementById('wm-toggle-autotag');
+        if (autoTagCheckbox) {
+            autoTagCheckbox.checked = localStorage.getItem('wmAutoTagEnabled') === 'true';
+        }
+
         const fillBtn = document.getElementById('wm-cache-fill-btn');
         if (fillBtn && !fillBtn._wmBound) {
             fillBtn._wmBound = true;
@@ -4925,7 +4914,7 @@
         renderTagsList();
         renderRulesList();
         bindTagButtons();
-        restoreScanUI(); // ⬅️ restaure l'UI si un scan tourne déjà
+        restoreScanUI();
     }
 
     function bindTagButtons() {
