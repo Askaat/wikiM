@@ -251,13 +251,13 @@
 
             // 1. Récupération des user_card_id physiques
             const physicalCards = await supabaseRequestWithRetry(
-                'GET',
+                'GET', 
                 `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
             );
 
             if (!physicalCards || !Array.isArray(physicalCards)) throw new Error("Impossible de récupérer les cartes physiques.");
 
-            // 2. Chargement de TES règles avancées (et non plus les anciens groupes)
+            // 2. Chargement de TES règles avancées
             const rules = JSON.parse(localStorage.getItem('wmTagRules') || '[]');
             const activeRules = rules.filter(r => r.enabled !== false);
             if (activeRules.length === 0) {
@@ -270,11 +270,21 @@
                 const physical = physicalCards.find(p => p.card_id === pc.id);
                 if (!physical) continue;
 
-                // Formatage de la carte pour qu'elle soit lisible par ton evaluateAllRules
+                const title = pc.wikipedia_title || pc.title;
+
+                // ---> FIX : Attente dynamique du chargement du prix en cache <---
+                let waitTime = 0;
+                // On patiente tant que le prix est introuvable ou en cours de chargement (max 8 secondes)
+                while ((!window.wmPrices[title] || window.wmPrices[title] === "LOADING") && waitTime < 80) {
+                    await new Promise(r => setTimeout(r, 100));
+                    waitTime++;
+                }
+
+                // Formatage de la carte pour qu'elle soit lisible par evaluateAllRules
                 const cardForEval = {
                     id: pc.id,
                     userCardId: physical.id,
-                    title: pc.wikipedia_title,
+                    title: title,
                     rarity: pc.rarity,
                     category: pc.category
                 };
@@ -288,12 +298,12 @@
                         user_card_id: physical.id,
                         tag_id: tagId
                     });
-
+                    
                     // Récupération du nom du tag pour le log
                     const tagName = window.wmTagsCache.find(t => t.id === tagId)?.name || 'Tag inconnu';
-                    console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${pc.wikipedia_title}`);
+                    console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${title}`);
 
-                    // ---> NOUVEAU: Délai pour éviter de submerger l'API et l'UI React <---
+                    // Délai pour éviter de submerger l'API et l'UI React
                     await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
