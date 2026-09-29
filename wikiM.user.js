@@ -12,9 +12,9 @@
     const WM_PATCH_NOTES = [
         {
             version: "2.1.5",
-            date: "29/09/2026 - 14:21",
+            date: "29/09/2026 - 09:50",
             changes: [
-                "Fix des routines de trade, fonctionnel !!"
+                "Fix des routines de trade + Ajout du tag auto lors des tirages"
             ]
         },
         {
@@ -227,6 +227,63 @@
         getUserId: () => W.wmUserId || null,
         refreshFromCookies: () => extractTokenFromCookies()
     };
+
+    // ============================================================
+        // MOTEUR D'AUTO-TAGGING SUPABASE
+        // ============================================================
+        async function processAutoTags(pulledCards) {
+            const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
+            if (!isAutoTagEnabled || !pulledCards || pulledCards.length === 0) return;
+
+            try {
+                console.log("[WM-Tags] 🏷️ Démarrage de l'Auto-Tagging...");
+
+                // 1. Récupération des user_card_id physiques (Les X dernières cartes obtenues)
+                const res = await fetch(`https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_cards?select=id,card_id&user_id=eq.${window.wmUserId}&order=obtained_at.desc&limit=${pulledCards.length}`, {
+                    headers: {
+                        "apikey": window.wmAuth.apikey,
+                        "authorization": window.wmAuth.token
+                    }
+                });
+
+                if (!res.ok) throw new Error("Impossible de récupérer les user_card_id");
+                const physicalCards = await res.json();
+
+                // 2. Chargement des règles de tags groupées
+                const tagGroups = JSON.parse(localStorage.getItem('wmTagGroups') || '[]');
+                const allRules = tagGroups.flatMap(g => g.rules || []);
+                if (allRules.length === 0) return;
+
+                // 3. Croisement des données et envoi des requêtes
+                for (const pc of pulledCards) {
+                    const physical = physicalCards.find(p => p.card_id === pc.id);
+                    if (!physical) continue;
+
+                    // Chercher les règles qui matchent
+                    const searchStr = `${pc.wikipedia_title} ${pc.category}`.toLowerCase();
+                    const applicableRules = allRules.filter(rule => searchStr.includes(rule.keyword.toLowerCase()));
+
+                    // Envoi des tags un par un
+                    for (const rule of applicableRules) {
+                        await fetch("https://cyrxjeppjqsxxjayfrur.supabase.co/rest/v1/user_card_tags", {
+                            method: "POST",
+                            headers: {
+                                "content-type": "application/json",
+                                "apikey": window.wmAuth.apikey,
+                                "authorization": window.wmAuth.token
+                            },
+                            body: JSON.stringify({
+                                user_card_id: physical.id,
+                                tag_id: rule.tagId
+                            })
+                        });
+                        console.log(`[WM-Tags] ✅ Tag appliqué : ${rule.keyword} sur ${pc.wikipedia_title}`);
+                    }
+                }
+            } catch (e) {
+                console.error("[WM-Tags] ❌ Erreur d'Auto-Tagging :", e);
+            }
+        }
 
     // ============================================================
     // WRAPPER DE RETRY GÉNÉRIQUE
@@ -1515,6 +1572,40 @@
         .wm-preview-desc { font-size: 12px; color: #94a3b8; line-height: 1.4; max-height: 100px; overflow-y: auto; text-align: left; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; }
         .wm-preview-stats { display: flex; justify-content: space-around; background: rgba(30, 41, 59, 0.7); padding: 10px; border-radius: 8px; font-size: 14px; font-weight: bold; }
 
+        /* ===== Groupes de Tags & Auto-Tag ===== */
+        .wm-auto-tag-panel {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px; padding: 12px; margin-bottom: 16px;
+        }
+        .wm-auto-tag-lbl { font-size: 13px; font-weight: bold; color: #10b981; }
+
+        .wm-tag-group {
+            background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 8px; margin-bottom: 8px; overflow: hidden;
+        }
+        .wm-tag-group-header {
+            padding: 10px 12px; background: rgba(15, 23, 42, 0.6);
+            display: flex; justify-content: space-between; align-items: center;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .wm-tag-group-header:hover { background: rgba(30, 41, 59, 0.8); }
+        .wm-tag-group-title { font-size: 13px; font-weight: bold; color: #e5e7eb; }
+
+        .wm-tag-group-content {
+            padding: 12px; display: none; flex-direction: column; gap: 8px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .wm-tag-group.open .wm-tag-group-content { display: flex; }
+
+        .wm-tag-rule-row {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(15, 23, 42, 0.4); padding: 6px 10px; border-radius: 6px;
+        }
+        .wm-tag-badge {
+            font-size: 10px; padding: 2px 6px; border-radius: 12px;
+            color: #000; font-weight: bold;
+        }
     `);
     // GM_addStyle fin
 
@@ -2128,14 +2219,9 @@
             if (headers.has('authorization')) {
                 const token = headers.get('authorization');
                 window.wmAuth.token = token;
-
-                // --- DÉCODAGE DYNAMIQUE DU JWT POUR RÉCUPÉRER L'ID UTILISATEUR ---
                 try {
-                    // Un JWT est composé de 3 parties séparées par des points. La partie 2 est le payload.
                     const payload = JSON.parse(atob(token.split('.')[1]));
-                    if (payload && payload.sub) {
-                        window.wmUserId = payload.sub;
-                    }
+                    if (payload && payload.sub) window.wmUserId = payload.sub;
                 } catch(e) {}
             }
         }
@@ -2143,16 +2229,33 @@
         const response = await originalFetch.apply(this, args);
 
         try {
+            // ---> INTERCEPTION DES PACKS (Pour l'Auto-Tag et les prix) <---
+            if (url && (url.includes('api/packs/') || url.includes('sync_profile_packs')) && options.method === 'POST') {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    const pulledCards = data.cards || data;
+                    if (Array.isArray(pulledCards)) {
+                        console.log("[WM-Pack] 🎴 Pack ouvert intercepté !");
+
+                        // Lancement de l'auto-tag après 1.5s (le temps que Supabase enregistre les cartes)
+                        setTimeout(() => {
+                            if (typeof processAutoTags === 'function') processAutoTags(pulledCards);
+                        }, 1500);
+                    }
+                }).catch(() => {});
+            }
+
+            // Interception des prix du marché
             if (url && url.includes('sales?scope=summary')) {
                 const clone = response.clone();
                 clone.json().then(data => {
                     if (data && data.wikipedia_title) {
                         window.wmPrices[data.wikipedia_title] = data.summary || {};
-                        renderPricesOnAllCards();
                     }
                 }).catch(() => {});
             }
 
+            // Interception de tes tags existants
             if (url && url.includes('/rest/v1/tags?select=')) {
                 const clone = response.clone();
                 clone.json().then(data => {
@@ -3572,6 +3675,15 @@
             </div>
 
             <div class="wm-tab-content hidden" data-tab="tags">
+                <div class="wm-section-title">Gestionnaire de Tags</div>
+
+                <!-- Toggle Auto-Tag -->
+                <div class="wm-auto-tag-panel">
+                    <span class="wm-auto-tag-lbl">⚡ Auto-Tag à l'ouverture des packs</span>
+                    <label style="display:flex; align-items:center; cursor:pointer;">
+                        <input type="checkbox" id="wm-toggle-autotag" style="width:16px; height:16px; accent-color:#10b981;">
+                    </label>
+                </div>
                 <div>
                     <div class="wm-section-title">Mes étiquettes</div>
                     <div id="wm-tags-list" style="background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:8px;padding:8px;font-size:12px;max-height:180px;overflow-y:auto;margin-bottom:8px;">
@@ -4109,8 +4221,6 @@
             btnSend.textContent = "Envoyer";
         }
 
-        // 3. Gestion de l'affichage Modale
-        // 3. Gestion de l'affichage Modale
         function openStModal(mode, trade = null) {
             stOverlay.classList.add('show');
             const vCreate = document.getElementById('wm-st-modal-create');
@@ -4489,7 +4599,139 @@
             }
         }
 
+        // ============================================================
+        // LOGIQUE GESTIONNAIRE DE TAGS (Groupes)
+        // ============================================================
 
+        function getTagGroups() {
+            return JSON.parse(localStorage.getItem('wmTagGroups') || '[]');
+        }
+        function saveTagGroups(groups) {
+            localStorage.setItem('wmTagGroups', JSON.stringify(groups));
+        }
+
+        function renderTagGroups() {
+            const container = document.getElementById('wm-tags-groups-list');
+            if (!container) return;
+            const groups = getTagGroups();
+
+            const autoTagCheckbox = document.getElementById('wm-toggle-autotag');
+            if (autoTagCheckbox) {
+                autoTagCheckbox.checked = localStorage.getItem('wmAutoTagEnabled') === 'true';
+            }
+
+            if (groups.length === 0) {
+                container.innerHTML = '<div class="wm-tracked-empty" style="margin-top:10px;">Aucun groupe configuré.</div>';
+                return;
+            }
+
+            container.innerHTML = groups.map((g, gIdx) => `
+        <div class="wm-tag-group">
+            <div class="wm-tag-group-header" data-idx="${gIdx}">
+                <span class="wm-tag-group-title">📁 ${g.name} (${g.rules ? g.rules.length : 0})</span>
+                <span style="color:#ef4444; font-size:12px;" class="wm-del-group-btn" data-idx="${gIdx}">✕</span>
+            </div>
+            <div class="wm-tag-group-content">
+                ${(g.rules || []).map((r, rIdx) => `
+                    <div class="wm-tag-rule-row">
+                        <span style="font-size:11px; color:#cbd5e1;">Contient : <b>"${r.keyword}"</b></span>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span class="wm-tag-badge" style="background-color:${r.tagColor || '#a78bfa'};">${r.tagName || 'Tag'}</span>
+                            <button class="wm-del-rule-btn" data-gidx="${gIdx}" data-ridx="${rIdx}" style="background:none; border:none; color:#ef4444; cursor:pointer;">✕</button>
+                        </div>
+                    </div>
+                `).join('')}
+                <div style="display:flex; gap:6px; margin-top:4px;">
+                    <input type="text" id="wm-rule-kw-${gIdx}" class="wm-panel-input" placeholder="Mot clé..." style="flex:1; font-size:10px; padding:4px;">
+                    <select id="wm-rule-tag-${gIdx}" class="wm-panel-input" style="flex:1; font-size:10px; padding:4px;">
+                        ${Object.keys(window.wmTags).map(tagName =>
+                                                         `<option value="${window.wmTags[tagName].id}|${tagName}|${window.wmTags[tagName].color}">${tagName}</option>`
+                                                        ).join('')}
+                    </select>
+                    <button class="wm-panel-btn wm-add-rule-btn" data-idx="${gIdx}" style="padding:4px 8px; font-size:10px;">+</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+        }
+
+        // Écouteurs globaux pour l'onglet Tags
+        document.addEventListener('click', (e) => {
+            // Créer un groupe
+            if (e.target.id === 'wm-btn-add-group') {
+                const input = document.getElementById('wm-new-group-name');
+                if (!input.value.trim()) return;
+                const groups = getTagGroups();
+                groups.push({ name: input.value.trim(), rules: [] });
+                saveTagGroups(groups);
+                input.value = '';
+                renderTagGroups();
+            }
+            // Ouvrir/Fermer un groupe (Accordéon)
+            else if (e.target.closest('.wm-tag-group-header') && !e.target.classList.contains('wm-del-group-btn')) {
+                const header = e.target.closest('.wm-tag-group-header');
+                header.parentElement.classList.toggle('open');
+            }
+            // Supprimer un groupe
+            else if (e.target.classList.contains('wm-del-group-btn')) {
+                const groups = getTagGroups();
+                groups.splice(e.target.dataset.idx, 1);
+                saveTagGroups(groups);
+                renderTagGroups();
+            }
+            // Ajouter une règle
+            else if (e.target.classList.contains('wm-add-rule-btn')) {
+                const gIdx = e.target.dataset.idx;
+                const kw = document.getElementById(`wm-rule-kw-${gIdx}`).value.trim();
+                const tagData = document.getElementById(`wm-rule-tag-${gIdx}`).value.split('|');
+
+                if (!kw || tagData.length !== 3) return;
+
+                const groups = getTagGroups();
+                groups[gIdx].rules.push({ keyword: kw, tagId: tagData[0], tagName: tagData[1], tagColor: tagData[2] });
+                saveTagGroups(groups);
+                renderTagGroups();
+
+                // Garder l'accordéon ouvert
+                setTimeout(() => {
+                    const header = document.querySelector(`.wm-tag-group-header[data-idx="${gIdx}"]`);
+                    if(header) header.parentElement.classList.add('open');
+                }, 10);
+            }
+            // Supprimer une règle
+            else if (e.target.classList.contains('wm-del-rule-btn')) {
+                const gIdx = e.target.dataset.gidx;
+                const rIdx = e.target.dataset.ridx;
+                const groups = getTagGroups();
+                groups[gIdx].rules.splice(rIdx, 1);
+                saveTagGroups(groups);
+                renderTagGroups();
+
+                // Garder l'accordéon ouvert
+                setTimeout(() => {
+                    const header = document.querySelector(`.wm-tag-group-header[data-idx="${gIdx}"]`);
+                    if(header) header.parentElement.classList.add('open');
+                }, 10);
+            }
+        });
+
+        // Écouteur pour la checkbox Auto-Tag
+        document.addEventListener('change', (e) => {
+            if (e.target.id === 'wm-toggle-autotag') {
+                localStorage.setItem('wmAutoTagEnabled', e.target.checked);
+            }
+        });
+
+        // Actualiser l'affichage de l'onglet si on clique dessus
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('.wm-menu-item') && e.target.closest('.wm-menu-item').dataset.tab === 'tags') {
+                renderTagGroups();
+            }
+        });
+
+
+
+        //ControlPanel fin
         renderSmartTradesList();
         renderPatchNotes();
         initTagsTab();
