@@ -19,6 +19,13 @@
                 "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu)",
                 "Raccourci CTRL+I transformé juste en I"
             ]
+        },
+        {
+            version: "2.1.0",
+            date: "29/09/2026 - 09:50",
+            changes: [
+                "Ajout des routines de trade !"
+            ]
         }
     ]
     
