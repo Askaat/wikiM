@@ -16,7 +16,7 @@
             changes: [
                 "Ajout de l'onglet Patch Notes avec historique.",
                 "Ajout des MàJ automatique via github",
-                "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu)",
+                "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu...)",
                 "Raccourci CTRL+I transformé juste en I"
             ]
         },
