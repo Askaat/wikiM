@@ -3019,138 +3019,7 @@
                 logToPanel(`[Bulk] ⚠️ Ajouté : ${title} (aucun ID trouvé)`);
             }
         }
-
-        // ============================================================
-        // LOGIQUE SMART TRADE (Routines)
-        // ============================================================
-        const viewMain = document.getElementById('wm-st-main-view');
-        const viewCreate = document.getElementById('wm-st-create-view');
-        const viewRun = document.getElementById('wm-st-run-view');
-
-        // Gérer l'affichage des sous-vues
-        function showStView(viewName) {
-            viewMain.style.display = viewName === 'main' ? 'flex' : 'none';
-            viewCreate.classList.toggle('show', viewName === 'create');
-            viewRun.classList.toggle('show', viewName === 'run');
-        }
-
-        // --- VUE 1 : Rendu de la liste ---
-        function renderSmartTradesList() {
-            const container = document.getElementById('wm-st-routines-list');
-            if (!container) return;
-            const trades = getSmartTrades();
-            
-            if (trades.length === 0) {
-                container.innerHTML = '<div class="wm-tracked-empty">Aucune routine configurée.</div>';
-                return;
-            }
-            
-            container.innerHTML = trades.map(t => `
-                <div class="wm-st-card">
-                    <div class="wm-st-header">
-                        <span class="wm-st-title">${t.name}</span>
-                        <span class="wm-st-friend">👤 ${t.friendName}</span>
-                    </div>
-                    <div class="wm-st-rules">
-                        <div class="wm-st-rule">Je veux : <span>${t.keywordsThem || 'Tout'}</span></div>
-                        <div class="wm-st-rule">Je donne : <span>${t.keywordsMe || 'Tout'}</span></div>
-                    </div>
-                    <div class="wm-st-actions">
-                        <button class="wm-panel-btn wm-st-run-btn" data-id="${t.id}" style="flex:1;">▶ Lancer</button>
-                        <button class="wm-panel-btn ghost wm-st-del-btn" data-id="${t.id}" style="padding: 4px 8px; color: #ef4444;">🗑️</button>
-                    </div>
-                </div>
-            `).join('');
-
-            // Boutons de suppression
-            container.querySelectorAll('.wm-st-del-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const id = e.currentTarget.dataset.id;
-                    saveSmartTrades(getSmartTrades().filter(tr => tr.id !== id));
-                    renderSmartTradesList();
-                });
-            });
-
-            // Boutons de lancement (Ouvre la vue 3)
-            container.querySelectorAll('.wm-st-run-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const id = e.currentTarget.dataset.id;
-                    const trade = getSmartTrades().find(tr => tr.id === id);
-                    if (trade) {
-                        document.getElementById('wm-st-run-title').textContent = `Exécution : ${trade.name}`;
-                        document.getElementById('wm-st-lbl-friend').textContent = trade.friendName;
-                        showStView('run');
-                        // La logique de scan API viendra ici à la prochaine étape !
-                    }
-                });
-            });
-        }
-
-        // --- VUE 2 : Création ---
-        async function fetchFriendsForSelect() {
-            const select = document.getElementById('wm-st-input-friend');
-            select.innerHTML = '<option value="">⏳ Chargement...</option>';
-            try {
-                const res = await fetch("https://www.wiki-masters.com/api/friends", { credentials: "include" });
-                const data = await res.json();
-                
-                // On récupère uniquement les amis acceptés et on trouve le bon profil
-                const friends = data.friendships
-                    .filter(f => f.status === 'accepted')
-                    .map(f => {
-                        const isRequesterMe = f.requester.id === window.wmUserId;
-                        return isRequesterMe ? f.addressee : f.requester;
-                    });
-                
-                if (friends.length === 0) {
-                    select.innerHTML = '<option value="">Aucun ami trouvé</option>';
-                    return;
-                }
-                
-                select.innerHTML = '<option value="">-- Choisir un ami --</option>' + 
-                    friends.map(fr => `<option value="${fr.id}" data-name="${fr.username}">${fr.username}</option>`).join('');
-            } catch (e) {
-                select.innerHTML = '<option value="">❌ Erreur chargement</option>';
-            }
-        }
-
-        // Ouvrir la création
-        document.getElementById('wm-st-btn-new').addEventListener('click', () => {
-            document.getElementById('wm-st-input-name').value = '';
-            document.getElementById('wm-st-input-keywords-me').value = '';
-            document.getElementById('wm-st-input-keywords-them').value = '';
-            fetchFriendsForSelect();
-            showStView('create');
-        });
-
-        // Sauvegarder la création
-        document.getElementById('wm-st-btn-save').addEventListener('click', () => {
-            const name = document.getElementById('wm-st-input-name').value.trim();
-            const friendSelect = document.getElementById('wm-st-input-friend');
-            const friendId = friendSelect.value;
-            const friendName = friendSelect.options[friendSelect.selectedIndex]?.dataset.name || 'Ami inconnu';
-            const kwThem = document.getElementById('wm-st-input-keywords-them').value.trim();
-            const kwMe = document.getElementById('wm-st-input-keywords-me').value.trim();
-
-            if (!name || !friendId) return alert("Le nom et l'ami sont obligatoires !");
-
-            const trades = getSmartTrades();
-            trades.push({
-                id: Date.now().toString(), name, friendId, friendName, keywordsThem: kwThem, keywordsMe: kwMe
-            });
-            saveSmartTrades(trades);
-            
-            renderSmartTradesList();
-            showStView('main');
-        });
-
-        // --- BOUTONS DE FERMETURE DES VUES ---
-        document.getElementById('wm-st-create-close').addEventListener('click', () => showStView('main'));
-        document.getElementById('wm-st-run-close').addEventListener('click', () => showStView('main'));
-
-        // Initialisation de la liste au démarrage
-        renderSmartTradesList();
-
+        
         updateBulkUI();
         updateAllBulkButtonsUI();
     }
@@ -4050,6 +3919,135 @@
             `).join('');
         }
 
+        // ============================================================
+        // LOGIQUE SMART TRADE (Routines)
+        // ============================================================
+        const viewMain = document.getElementById('wm-st-main-view');
+        const viewCreate = document.getElementById('wm-st-create-view');
+        const viewRun = document.getElementById('wm-st-run-view');
+
+        // Gérer l'affichage des sous-vues
+        function showStView(viewName) {
+            viewMain.style.display = viewName === 'main' ? 'flex' : 'none';
+            viewCreate.classList.toggle('show', viewName === 'create');
+            viewRun.classList.toggle('show', viewName === 'run');
+        }
+
+        // --- VUE 1 : Rendu de la liste ---
+        function renderSmartTradesList() {
+            const container = document.getElementById('wm-st-routines-list');
+            if (!container) return;
+            const trades = getSmartTrades();
+            
+            if (trades.length === 0) {
+                container.innerHTML = '<div class="wm-tracked-empty">Aucune routine configurée.</div>';
+                return;
+            }
+            
+            container.innerHTML = trades.map(t => `
+                <div class="wm-st-card">
+                    <div class="wm-st-header">
+                        <span class="wm-st-title">${t.name}</span>
+                        <span class="wm-st-friend">👤 ${t.friendName}</span>
+                    </div>
+                    <div class="wm-st-rules">
+                        <div class="wm-st-rule">Je veux : <span>${t.keywordsThem || 'Tout'}</span></div>
+                        <div class="wm-st-rule">Je donne : <span>${t.keywordsMe || 'Tout'}</span></div>
+                    </div>
+                    <div class="wm-st-actions">
+                        <button class="wm-panel-btn wm-st-run-btn" data-id="${t.id}" style="flex:1;">▶ Lancer</button>
+                        <button class="wm-panel-btn ghost wm-st-del-btn" data-id="${t.id}" style="padding: 4px 8px; color: #ef4444;">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+
+            // Boutons de suppression
+            container.querySelectorAll('.wm-st-del-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const id = e.currentTarget.dataset.id;
+                    saveSmartTrades(getSmartTrades().filter(tr => tr.id !== id));
+                    renderSmartTradesList();
+                });
+            });
+
+            // Boutons de lancement (Ouvre la vue 3)
+            container.querySelectorAll('.wm-st-run-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const id = e.currentTarget.dataset.id;
+                    const trade = getSmartTrades().find(tr => tr.id === id);
+                    if (trade) {
+                        document.getElementById('wm-st-run-title').textContent = `Exécution : ${trade.name}`;
+                        document.getElementById('wm-st-lbl-friend').textContent = trade.friendName;
+                        showStView('run');
+                        // La logique de scan API viendra ici à la prochaine étape !
+                    }
+                });
+            });
+        }
+
+        // --- VUE 2 : Création ---
+        async function fetchFriendsForSelect() {
+            const select = document.getElementById('wm-st-input-friend');
+            select.innerHTML = '<option value="">⏳ Chargement...</option>';
+            try {
+                const res = await fetch("https://www.wiki-masters.com/api/friends", { credentials: "include" });
+                const data = await res.json();
+                
+                // On récupère uniquement les amis acceptés et on trouve le bon profil
+                const friends = data.friendships
+                    .filter(f => f.status === 'accepted')
+                    .map(f => {
+                        const isRequesterMe = f.requester.id === window.wmUserId;
+                        return isRequesterMe ? f.addressee : f.requester;
+                    });
+                
+                if (friends.length === 0) {
+                    select.innerHTML = '<option value="">Aucun ami trouvé</option>';
+                    return;
+                }
+                
+                select.innerHTML = '<option value="">-- Choisir un ami --</option>' + 
+                    friends.map(fr => `<option value="${fr.id}" data-name="${fr.username}">${fr.username}</option>`).join('');
+            } catch (e) {
+                select.innerHTML = '<option value="">❌ Erreur chargement</option>';
+            }
+        }
+
+        // Ouvrir la création
+        document.getElementById('wm-st-btn-new').addEventListener('click', () => {
+            document.getElementById('wm-st-input-name').value = '';
+            document.getElementById('wm-st-input-keywords-me').value = '';
+            document.getElementById('wm-st-input-keywords-them').value = '';
+            fetchFriendsForSelect();
+            showStView('create');
+        });
+
+        // Sauvegarder la création
+        document.getElementById('wm-st-btn-save').addEventListener('click', () => {
+            const name = document.getElementById('wm-st-input-name').value.trim();
+            const friendSelect = document.getElementById('wm-st-input-friend');
+            const friendId = friendSelect.value;
+            const friendName = friendSelect.options[friendSelect.selectedIndex]?.dataset.name || 'Ami inconnu';
+            const kwThem = document.getElementById('wm-st-input-keywords-them').value.trim();
+            const kwMe = document.getElementById('wm-st-input-keywords-me').value.trim();
+
+            if (!name || !friendId) return alert("Le nom et l'ami sont obligatoires !");
+
+            const trades = getSmartTrades();
+            trades.push({
+                id: Date.now().toString(), name, friendId, friendName, keywordsThem: kwThem, keywordsMe: kwMe
+            });
+            saveSmartTrades(trades);
+            
+            renderSmartTradesList();
+            showStView('main');
+        });
+
+        // --- BOUTONS DE FERMETURE DES VUES ---
+        document.getElementById('wm-st-create-close').addEventListener('click', () => showStView('main'));
+        document.getElementById('wm-st-run-close').addEventListener('click', () => showStView('main'));
+
+        renderSmartTradesList();
         renderPatchNotes();
         initTagsTab();
         updateBulkUI();
