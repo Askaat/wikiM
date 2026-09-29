@@ -12,9 +12,9 @@
     const WM_PATCH_NOTES = [
         {
             version: "2.1.6",
-            date: "29/09/2026 - 17:20",
+            date: "29/09/2026 - 17:40",
             changes: [
-                "Fix tag auto"
+                "Fix tag auto, à priori fonctionnel?"
             ]
         },
         {
@@ -292,6 +292,9 @@
                     // Récupération du nom du tag pour le log
                     const tagName = window.wmTagsCache.find(t => t.id === tagId)?.name || 'Tag inconnu';
                     console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${pc.wikipedia_title}`);
+
+                    // ---> NOUVEAU: Délai pour éviter de submerger l'API et l'UI React <---
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
         } catch (e) {
