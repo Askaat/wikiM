@@ -11,6 +11,13 @@
     // ============================================================
     const WM_PATCH_NOTES = [
         {
+            version: "2.1.5",
+            date: "29/09/2026 - 14:21",
+            changes: [
+                "Fix des routines de trade, fonctionnel !!"
+            ]
+        },
+        {
             version: "2.1.0",
             date: "29/09/2026 - 09:50",
             changes: [
@@ -23,12 +30,13 @@
             changes: [
                 "Ajout de l'onglet Patch Notes avec historique.",
                 "Ajout des MàJ automatique via github",
-                "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu...)",
+                "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu)",
                 "Raccourci CTRL+I transformé juste en I"
             ]
         }
     ]
-    
+
+    window.wmAuth = window.wmAuth || { apikey: "", token: "" };
     window.wmPrices = {};
     window.wmFetching = new Set();
     window.wmProcessedCards = new Set();
@@ -47,7 +55,7 @@
         preview: null,      // { toAdd, toRemove }
         startedAt: 0
     };
-    
+
     // ============================================================
     // SMART TRADES (Routines sauvegardées)
     // ============================================================
@@ -55,8 +63,8 @@
         try { return JSON.parse(localStorage.getItem('wmSmartTrades') || '[]'); }
         catch { return []; }
     }
-    function saveSmartTrades(trades) { 
-        localStorage.setItem('wmSmartTrades', JSON.stringify(trades)); 
+    function saveSmartTrades(trades) {
+        localStorage.setItem('wmSmartTrades', JSON.stringify(trades));
     }
 
     // ============================================================
@@ -1447,7 +1455,68 @@
         .wm-trade-item { display: flex; justify-content: space-between; align-items: center; background: rgba(51, 65, 85, 0.8); padding: 4px 6px; border-radius: 4px; font-size: 10px; color: #e5e7eb; }
         .wm-trade-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
         .wm-trade-item-remove { color: #ef4444; cursor: pointer; font-weight: bold; padding: 0 4px; }
+
+        /* ===== Modale Grand Format (Smart Trade) ===== */
+        #wm-st-overlay {
+            position: fixed; inset: 0; z-index: 100000;
+            background: rgba(0,0,0,0.8); backdrop-filter: blur(6px);
+            display: none; align-items: center; justify-content: center;
+        }
+        #wm-st-overlay.show { display: flex; animation: fadeIn 0.15s; }
+        .wm-st-large-modal {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 14px; padding: 24px;
+            width: 90%; max-width: 800px; max-height: 90vh;
+            color: #e5e7eb; display: flex; flex-direction: column; gap: 16px;
+            box-shadow: 0 24px 48px rgba(0,0,0,0.7);
+        }
+        .wm-st-large-modal .wm-panel-input { font-size: 14px; padding: 10px; }
+        .wm-trade-wb-container {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 8px; padding: 6px 10px; margin-top: 4px;
+        }
+        .wm-trade-wb-label { font-size: 11px; color: #94a3b8; }
+        .wm-trade-wb-input {
+            background: transparent; border: none; color: #fbbf24; font-family: monospace;
+            font-size: 14px; width: 80px; text-align: right; outline: none;
+        }
+
+        /* ===== Modale de Prévisualisation Grand Format ===== */
+        #wm-preview-overlay {
+            position: fixed; inset: 0; z-index: 999999;
+            background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);
+            display: none; align-items: center; justify-content: center;
+            animation: fadeIn 0.15s ease;
+        }
+        #wm-preview-overlay.show { display: flex; }
+        .wm-preview-box {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border: 1px solid rgba(99, 102, 241, 0.5);
+            border-radius: 16px; padding: 24px;
+            width: 90%; max-width: 400px;
+            color: #e5e7eb; display: flex; flex-direction: column; gap: 16px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+            position: relative; text-align: center;
+        }
+        .wm-preview-close {
+            position: absolute; top: 12px; right: 12px;
+            background: transparent; border: none; color: #94a3b8;
+            font-size: 20px; cursor: pointer;
+        }
+        .wm-preview-close:hover { color: #fff; }
+        .wm-preview-img-container {
+            width: 100%; height: 300px; border-radius: 10px; overflow: hidden;
+            position: relative; background: #000; border: 1px solid rgba(255,255,255,0.1);
+        }
+        .wm-preview-img-container img { width: 100%; height: 100%; object-fit: contain; }
+        .wm-preview-title { font-size: 18px; font-weight: bold; color: #fff; font-family: var(--font-heading, sans-serif); }
+        .wm-preview-desc { font-size: 12px; color: #94a3b8; line-height: 1.4; max-height: 100px; overflow-y: auto; text-align: left; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; }
+        .wm-preview-stats { display: flex; justify-content: space-around; background: rgba(30, 41, 59, 0.7); padding: 10px; border-radius: 8px; font-size: 14px; font-weight: bold; }
+
     `);
+    // GM_addStyle fin
 
     // ============================================================
     // LOG / UTILITAIRES UI
@@ -2050,60 +2119,52 @@
     // ============================================================
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
-        let reqUrl = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+        const url = args[0] instanceof Request ? args[0].url : args[0];
+        const options = args[1] || {};
+
+        if (options.headers) {
+            const headers = new Headers(options.headers);
+            if (headers.has('apikey')) window.wmAuth.apikey = headers.get('apikey');
+            if (headers.has('authorization')) {
+                const token = headers.get('authorization');
+                window.wmAuth.token = token;
+
+                // --- DÉCODAGE DYNAMIQUE DU JWT POUR RÉCUPÉRER L'ID UTILISATEUR ---
+                try {
+                    // Un JWT est composé de 3 parties séparées par des points. La partie 2 est le payload.
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    if (payload && payload.sub) {
+                        window.wmUserId = payload.sub;
+                    }
+                } catch(e) {}
+            }
+        }
+
         const response = await originalFetch.apply(this, args);
-        (async () => {
-            try {
-                const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-                if (reqUrl.includes('my-collection')) {
-                    const data = await response.clone().json();
-                    let items = data.cards || data.collection || data.data || data || [];
-                    items.forEach(item => {
-                        const title = item.card?.wikipedia_title || item.wikipedia_title;
-                        if ((item.id || item.userCardId) && title) window.wmInventoryMap[title] = item.id || item.userCardId;
-                    });
-                }
-                else if (reqUrl.includes('/discard') || reqUrl.includes('/auction')) {
-                    const clone = response.clone();
-                    let errorText = "";
-                    try { const data = await clone.json(); if (data.error) errorText = data.error; } catch(e) {}
-                    if (response.ok || response.status === 409 || errorText.includes('possédez plus')) {
-                        if (window.wmPendingCardTitle) markCardAsProcessedByTitle(window.wmPendingCardTitle);
-                    }
-                }
-                else if (reqUrl.includes('sales?scope=summary')) {
-                    const data = await response.clone().json();
-                    if (data && data.wikipedia_title) {
-                        const hasSales = Object.keys(data.summary || {}).length > 0;
-                        const finalData = hasSales ? data.summary : "EMPTY";
-                        window.wmPrices[data.wikipedia_title] = finalData;
-                        savePriceToCache(data.wikipedia_title, finalData);
-                        if (document.body) renderPricesOnAllCards();
-                    }
-                }
-                else if (reqUrl.includes('/api/marketplace') && !window.wmUserId) {
-                    try {
-                        const data = await response.clone().json();
-                        if (data.bidding && data.bidding.length > 0 && data.bidding[0].current_bidder_id) {
-                            window.wmUserId = data.bidding[0].current_bidder_id;
-                        } else if (data.selling && data.selling.length > 0 && data.selling[0].seller_id) {
-                            window.wmUserId = data.selling[0].seller_id;
-                        }
-                    } catch(e) {}
-                }
-                else if (url && url.includes('/api/profile/') && url.includes('/collection')) {
+
+        try {
+            if (url && url.includes('sales?scope=summary')) {
                 const clone = response.clone();
                 clone.json().then(data => {
-                    const items = data.collection || data.cards || data.data || [];
-                    // On sauvegarde l'ordre exact des UUIDs des cartes
-                    window.wmCollectionOrder = items.map(item => {
-                        return item.card_id || item.id || (item.card && item.card.id);
-                    }).filter(Boolean);
-                    console.log(`[WM-API] 📦 Ordre intercepté ! ${window.wmCollectionOrder.length} cartes mémorisées.`);
-                }).catch(err => console.error("[WM-API] Erreur de lecture :", err));
-                }
-            } catch(e) {}
-        })();
+                    if (data && data.wikipedia_title) {
+                        window.wmPrices[data.wikipedia_title] = data.summary || {};
+                        renderPricesOnAllCards();
+                    }
+                }).catch(() => {});
+            }
+
+            if (url && url.includes('/rest/v1/tags?select=')) {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    if (Array.isArray(data)) {
+                        data.forEach(tag => {
+                            window.wmTags[tag.name] = { id: tag.id, color: tag.color || '#a78bfa' };
+                        });
+                    }
+                }).catch(() => {});
+            }
+        } catch (e) {}
+
         return response;
     };
 
@@ -3019,7 +3080,7 @@
                 logToPanel(`[Bulk] ⚠️ Ajouté : ${title} (aucun ID trouvé)`);
             }
         }
-        
+
         updateBulkUI();
         updateAllBulkButtonsUI();
     }
@@ -3168,12 +3229,12 @@
  */
         function navigateToCardIndex(targetIdx) {
         const cards = getCollectionCards();
-        
+
         // --- GESTION DU CHANGEMENT DE PAGE ---
         if (targetIdx < 0 || targetIdx >= cards.length) {
             const isNext = targetIdx >= cards.length;
             const btnText = isNext ? 'Suivant →' : '← Précédent';
-            
+
             // Recherche du bouton de pagination actif
             const buttons = Array.from(document.querySelectorAll('button'));
             const targetBtn = buttons.find(b => b.textContent.trim() === btnText && !b.disabled);
@@ -3184,7 +3245,7 @@
             }
 
             console.log(`[WM-Nav] 🔄 Changement de page : clic sur "${btnText}"...`);
-            
+
             // 1) Fermer le modal actuel
             closeCardModal();
 
@@ -3199,25 +3260,25 @@
             const waitForPage = setInterval(() => {
                 pageAttempts++;
                 const freshCards = getCollectionCards();
-                
+
                 // La page a changé si le premier élément du DOM est différent
                 if (freshCards.length > 0 && (freshCards[0] !== oldFirstCard || pageAttempts > 20)) {
                     clearInterval(waitForPage);
-                    
+
                     // Cible la première carte (si on avance) ou la dernière (si on recule)
                     const newTargetIdx = isNext ? 0 : freshCards.length - 1;
                     const newTargetCard = freshCards[newTargetIdx];
                     const newTargetTitle = getCardTitleFromEl(newTargetCard);
-                    
+
                     if (newTargetCard) {
                         newTargetCard.scrollIntoView({ behavior: 'auto', block: 'center' });
-                        
+
                         setTimeout(() => {
-                            const clickable = newTargetCard.querySelector('img') 
-                                || newTargetCard.querySelector('[role="button"]') 
+                            const clickable = newTargetCard.querySelector('img')
+                                || newTargetCard.querySelector('[role="button"]')
                                 || newTargetCard;
                             clickable.click();
-                            
+
                             wmCurrentCardIndex = newTargetIdx;
                             wmCurrentCardTitle = newTargetTitle;
                             console.log(`[WM-Nav] ✅ Nouvelle page chargée, ouverture de "${newTargetTitle}"`);
@@ -3556,7 +3617,7 @@
 
             <!-- ONGLET SMART TRADE -->
             <div class="wm-tab-content hidden" data-tab="trade" style="position: relative;">
-                
+
                 <!-- VUE 1 : LISTE DES ROUTINES -->
                 <div id="wm-st-main-view" style="display: flex; flex-direction: column; height: 100%;">
                     <div class="wm-section-title">Mes Routines d'Échange</div>
@@ -3565,79 +3626,6 @@
                     </div>
                     <button id="wm-st-btn-new" class="wm-panel-btn" style="margin-top: 10px; width: 100%;">+ Créer une routine d'échange</button>
                 </div>
-
-                <!-- VUE 2 : CRÉATION D'UNE ROUTINE (Cachée) -->
-                <div id="wm-st-create-view" class="wm-internal-modal">
-                    <div class="wm-panel-header" style="padding: 0 0 8px 0; background: none; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                        <span class="wm-panel-header-title">Nouvelle Routine</span>
-                        <button class="wm-panel-close" id="wm-st-create-close">✕</button>
-                    </div>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px; overflow-y: auto;">
-                        <div>
-                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Nom du Trade</label>
-                            <input type="text" id="wm-st-input-name" class="wm-panel-input" placeholder="Ex: Razzia d'Astéroïdes" style="width:100%; margin-top:4px;">
-                        </div>
-                        <div>
-                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Ami cible</label>
-                            <select id="wm-st-input-friend" class="wm-panel-input" style="width:100%; margin-top:4px;">
-                                <option value="">⏳ Chargement de la liste d'amis...</option>
-                            </select>
-                        </div>
-                        <div style="background: rgba(79, 70, 229, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; p: 8px; padding: 8px;">
-                            <label style="font-size:10px; color:#a5b4fc; font-weight:bold;">Mots-clés de SES cartes (Que je veux)</label>
-                            <input type="text" id="wm-st-input-keywords-them" class="wm-panel-input" placeholder="Ex: astéroïde, espace, lune" style="width:100%; margin-top:4px;">
-                        </div>
-                        <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px;">
-                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Mots-clés de MES cartes (À donner)</label>
-                            <input type="text" id="wm-st-input-keywords-me" class="wm-panel-input" placeholder="Ex: double, commun" style="width:100%; margin-top:4px;">
-                        </div>
-                    </div>
-                    
-                    <button id="wm-st-btn-save" class="wm-panel-btn" style="margin-top: auto;">Enregistrer la routine</button>
-                </div>
-
-                <!-- VUE 3 : EXÉCUTION D'UNE ROUTINE (Cachée) -->
-                <div id="wm-st-run-view" class="wm-internal-modal">
-                    <div class="wm-panel-header" style="padding: 0 0 8px 0; background: none; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                        <span class="wm-panel-header-title" id="wm-st-run-title">Exécution</span>
-                        <button class="wm-panel-close" id="wm-st-run-close">✕</button>
-                    </div>
-
-                    <div style="font-size: 11px; color: #fbbf24; text-align: center; margin-top: 6px;" id="wm-st-run-status">
-                        En attente du lancement...
-                    </div>
-
-                    <div class="wm-trade-container">
-                        <!-- Colonne MOI -->
-                        <div class="wm-trade-side">
-                            <div class="wm-trade-header">
-                                <span>Moi (Filtre: <span id="wm-st-lbl-kme"></span>)</span>
-                                <span class="wm-trade-val" id="wm-run-my-val">0 WB</span>
-                            </div>
-                            <div class="wm-trade-list" id="wm-run-my-list"></div>
-                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-me" style="padding:4px; font-size:10px;">+ Parcourir</button>
-                            <input type="number" id="wm-run-my-wb" class="wm-panel-input" placeholder="WB ajoutés" style="padding:4px; margin-top:2px;">
-                        </div>
-
-                        <!-- Colonne AMI -->
-                        <div class="wm-trade-side">
-                            <div class="wm-trade-header">
-                                <span id="wm-st-lbl-friend">L'ami</span>
-                                <span class="wm-trade-val" id="wm-run-their-val">0 WB</span>
-                            </div>
-                            <div class="wm-trade-list" id="wm-run-their-list"></div>
-                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-them" style="padding:4px; font-size:10px;">+ Parcourir</button>
-                            <input type="number" id="wm-run-their-wb" class="wm-panel-input" placeholder="WB demandés" style="padding:4px; margin-top:2px;">
-                        </div>
-                    </div>
-
-                    <div style="display:flex; gap:6px; margin-top:auto;">
-                        <button id="wm-st-run-start" class="wm-panel-btn ghost" style="flex:1;">🔄 Lancer l'auto-scan</button>
-                        <button id="wm-st-run-send" class="wm-panel-btn" style="flex:1.5; background: linear-gradient(135deg, #10b981, #059669);" disabled>Envoyer (Écart: -)</button>
-                    </div>
-                </div>
-
             </div>
 
             <div class="wm-tab-content hidden" data-tab="prefs">
@@ -3904,7 +3892,7 @@
         function renderPatchNotes() {
             const container = document.getElementById('wm-patch-notes-list');
             if (!container) return;
-            
+
             // Le tableau est parcouru dans l'ordre (le plus récent en premier si tu les ajoutes en haut du tableau WM_PATCH_NOTES)
             container.innerHTML = WM_PATCH_NOTES.map(pn => `
                 <div class="wm-patch-item">
@@ -3920,30 +3908,270 @@
         }
 
         // ============================================================
-        // LOGIQUE SMART TRADE (Routines)
+        // LOGIQUE SMART TRADE (Routines & Grande Modale)
         // ============================================================
-        const viewMain = document.getElementById('wm-st-main-view');
-        const viewCreate = document.getElementById('wm-st-create-view');
-        const viewRun = document.getElementById('wm-st-run-view');
 
-        // Gérer l'affichage des sous-vues
-        function showStView(viewName) {
-            viewMain.style.display = viewName === 'main' ? 'flex' : 'none';
-            viewCreate.classList.toggle('show', viewName === 'create');
-            viewRun.classList.toggle('show', viewName === 'run');
+        let stCurrentTrade = null;
+        let stSelectedMe = [];
+        let stSelectedThem = [];
+
+        // 1. Injection de la Grande Modale dans le body
+        const stOverlay = document.createElement('div');
+        stOverlay.id = 'wm-st-overlay';
+        stOverlay.innerHTML = `
+            <div class="wm-st-large-modal">
+                <div class="wm-panel-header" style="background:none; border-bottom: 1px solid rgba(255,255,255,0.1); padding:0 0 12px 0;">
+                    <span class="wm-panel-header-title" id="wm-st-modal-title" style="font-size: 18px;">Nouvelle Routine</span>
+                    <button class="wm-panel-close" id="wm-st-overlay-close" style="font-size: 24px;">✕</button>
+                </div>
+
+                <!-- VUE CRÉATION -->
+                <div id="wm-st-modal-create" style="display:none; flex-direction: column; gap: 16px; overflow-y: auto;">
+                    <div style="display: flex; gap: 16px;">
+                        <div style="flex:1;">
+                            <label style="font-size:12px; color:#cbd5e1; font-weight:bold;">Nom du Trade</label>
+                            <input type="text" id="wm-st-input-name" class="wm-panel-input" placeholder="Ex: Razzia d'Astéroïdes" style="width:100%; margin-top:6px;">
+                        </div>
+                        <div style="flex:1;">
+                            <label style="font-size:12px; color:#cbd5e1; font-weight:bold;">Ami cible</label>
+                            <select id="wm-st-input-friend" class="wm-panel-input" style="width:100%; margin-top:6px;">
+                                <option value="">⏳ Chargement de la liste d'amis...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 16px;">
+                        <div style="flex:1; background: rgba(79, 70, 229, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 12px;">
+                            <label style="font-size:12px; color:#a5b4fc; font-weight:bold;">Mots-clés de SES cartes (Que je veux)</label>
+                            <input type="text" id="wm-st-input-keywords-them" class="wm-panel-input" placeholder="Ex: astéroïde, espace, lune" style="width:100%; margin-top:6px;">
+                        </div>
+                        <div style="flex:1; background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 12px;">
+                            <label style="font-size:12px; color:#94a3b8; font-weight:bold;">Mots-clés de MES cartes (À donner)</label>
+                            <input type="text" id="wm-st-input-keywords-me" class="wm-panel-input" placeholder="Ex: double, commun" style="width:100%; margin-top:6px;">
+                        </div>
+                    </div>
+                    <button id="wm-st-btn-save" class="wm-panel-btn" style="margin-top: 10px; font-size: 14px; padding: 12px;">💾 Enregistrer la routine</button>
+                </div>
+
+                <!-- VUE EXÉCUTION -->
+                <div id="wm-st-modal-run" style="display:none; flex-direction: column; gap: 16px; flex:1; min-height:0;">
+                    <div style="font-size: 13px; color: #fbbf24; text-align: center; font-weight: bold;" id="wm-st-run-status">
+                        Prêt à scanner.
+                    </div>
+
+                    <div class="wm-trade-container" style="margin:0; gap:16px;">
+                        <!-- Colonne MOI -->
+                        <div class="wm-trade-side" style="padding:12px;">
+                            <div class="wm-trade-header" style="font-size:14px;">
+                                <span id="wm-st-header-me" style="cursor:help;">Moi ❓</span>
+                                <span class="wm-trade-val" id="wm-run-my-val" style="font-size:16px;">0 WB</span>
+                            </div>
+                            <div class="wm-trade-list" id="wm-run-my-list" style="min-height: 180px;"></div>
+                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-me" style="padding:8px; font-size:12px;">+ Parcourir ma collection</button>
+                            <div class="wm-trade-wb-container">
+                                <span class="wm-trade-wb-label">WB ajoutés :</span>
+                                <input type="number" id="wm-run-my-wb" class="wm-trade-wb-input" value="0" min="0">
+                            </div>
+                        </div>
+
+                        <!-- Colonne AMI -->
+                        <div class="wm-trade-side" style="padding:12px;">
+                            <div class="wm-trade-header" style="font-size:14px;">
+                                <span id="wm-st-header-them" style="cursor:help;"><span id="wm-st-lbl-friend">L'ami</span> ❓</span>
+                                <span class="wm-trade-val" id="wm-run-their-val" style="font-size:16px;">0 WB</span>
+                            </div>
+                            <div class="wm-trade-list" id="wm-run-their-list" style="min-height: 180px;"></div>
+                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-them" style="padding:8px; font-size:12px;">+ Parcourir sa collection</button>
+                            <div class="wm-trade-wb-container">
+                                <span class="wm-trade-wb-label">WB demandés :</span>
+                                <input type="number" id="wm-run-their-wb" class="wm-trade-wb-input" value="0" min="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; gap:12px;">
+                        <button id="wm-st-run-start" class="wm-panel-btn ghost" style="flex:1; font-size:14px; padding:12px;">🔄 Lancer l'auto-scan</button>
+                        <button id="wm-st-run-send" class="wm-panel-btn" style="flex:2; font-size:14px; padding:12px; background: linear-gradient(135deg, #10b981, #059669);" disabled>Envoyer</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(stOverlay);
+
+        // 2. Fonctions Utilitaires & Identité Dynamique
+        // 2. Fonctions Utilitaires & Identité Dynamique
+        async function ensureIdentity() {
+            // Si on a déjà les deux infos, pas besoin de refaire l'appel
+            if (window.wmUsername && window.wmUserId) return true;
+
+            try {
+                const res = await fetch("https://www.wiki-masters.com/api/friends", { credentials: "include" });
+                const data = await res.json();
+                const friendships = data.friendships || [];
+
+                if (friendships.length > 0) {
+                    const counts = {};
+                    const idMap = {}; // On crée une carte pour lier le pseudo à l'ID
+
+                    friendships.forEach(f => {
+                        if (f.requester) {
+                            counts[f.requester.username] = (counts[f.requester.username] || 0) + 1;
+                            idMap[f.requester.username] = f.requester.id;
+                        }
+                        if (f.addressee) {
+                            counts[f.addressee.username] = (counts[f.addressee.username] || 0) + 1;
+                            idMap[f.addressee.username] = f.addressee.id;
+                        }
+                    });
+
+                    // Le pseudo qui apparaît le plus est le tien
+                    const myName = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+                    window.wmUsername = myName;
+                    window.wmUserId = idMap[myName]; // On sauvegarde l'ID !
+
+                    console.log(`[WM-Trade] Identité confirmée : ${window.wmUsername} (${window.wmUserId})`);
+                    return true;
+                }
+            } catch (e) {
+                console.error("[WM-Trade] Identité introuvable:", e);
+            }
+            return false;
         }
 
-        // --- VUE 1 : Rendu de la liste ---
+        function getCardPrice(title, rarity) {
+            if (!title) return 0;
+            // Normalisation pour chercher dans le cache des prix du script principal
+            const summary = window.wmPrices[title];
+            if (summary && summary[rarity] !== undefined) {
+                if (typeof summary[rarity] === 'object' && summary[rarity].average !== undefined) {
+                    return summary[rarity].average;
+                }
+                if (typeof summary[rarity] === 'number') {
+                    return summary[rarity];
+                }
+            }
+            return 0; // Valeur par défaut si le prix n'est pas en cache
+        }
+
+        function updateTradeRunUI() {
+            const listMe = document.getElementById('wm-run-my-list');
+            const listThem = document.getElementById('wm-run-their-list');
+
+            let sumMe = 0;
+            listMe.innerHTML = stSelectedMe.map((c, i) => {
+                const title = c.card?.wikipedia_title || 'Carte sans titre';
+                const rarity = c.card?.rarity || 'C';
+                const price = getCardPrice(title, rarity);
+                sumMe += price;
+
+                return `<div class="wm-trade-item">
+                    <span class="wm-trade-item-title" title="${title}">[${rarity}] ${title}</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="color:#fbbf24;">${price} WB</span>
+                        <button class="wm-trade-preview-trigger" data-side="me" data-idx="${i}" style="background:none; border:none; cursor:pointer; font-size:12px;" title="Aperçu">🔍</button>
+                        <button class="wm-trade-del-trigger" data-side="me" data-idx="${i}" style="background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; font-size:12px;" title="Supprimer">✕</button>
+                    </div>
+                </div>`;
+            }).join('');
+
+            let sumThem = 0;
+            listThem.innerHTML = stSelectedThem.map((c, i) => {
+                const title = c.card?.wikipedia_title || 'Carte sans titre';
+                const rarity = c.card?.rarity || 'C';
+                const price = getCardPrice(title, rarity);
+                sumThem += price;
+
+                return `<div class="wm-trade-item">
+                    <span class="wm-trade-item-title" title="${title}">[${rarity}] ${title}</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="color:#fbbf24;">${price} WB</span>
+                        <button class="wm-trade-preview-trigger" data-side="them" data-idx="${i}" style="background:none; border:none; cursor:pointer; font-size:12px;" title="Aperçu">🔍</button>
+                        <button class="wm-trade-del-trigger" data-side="them" data-idx="${i}" style="background:none; border:none; color:#ef4444; cursor:pointer; font-weight:bold; font-size:12px;" title="Supprimer">✕</button>
+                    </div>
+                </div>`;
+            }).join('');
+
+            document.getElementById('wm-run-my-val').textContent = `${sumMe} WB`;
+            document.getElementById('wm-run-their-val').textContent = `${sumThem} WB`;
+
+            const diff = sumMe - sumThem;
+            const inputMyWb = document.getElementById('wm-run-my-wb');
+            const inputTheirWb = document.getElementById('wm-run-their-wb');
+            const btnSend = document.getElementById('wm-st-run-send');
+
+            if (inputMyWb && inputTheirWb) {
+                if (parseInt(inputMyWb.value || 0, 10) === 0 && parseInt(inputTheirWb.value || 0, 10) === 0) {
+                    if (diff > 0) inputTheirWb.value = diff;
+                    else if (diff < 0) inputMyWb.value = Math.abs(diff);
+                }
+            }
+
+            btnSend.disabled = (stSelectedMe.length === 0 && stSelectedThem.length === 0);
+            btnSend.textContent = "Envoyer";
+        }
+
+        // 3. Gestion de l'affichage Modale
+        // 3. Gestion de l'affichage Modale
+        function openStModal(mode, trade = null) {
+            stOverlay.classList.add('show');
+            const vCreate = document.getElementById('wm-st-modal-create');
+            const vRun = document.getElementById('wm-st-modal-run');
+            const title = document.getElementById('wm-st-modal-title');
+
+            if (mode === 'create') {
+                title.textContent = '✨ Nouvelle Routine';
+                vCreate.style.display = 'flex';
+                vRun.style.display = 'none';
+
+                document.getElementById('wm-st-input-name').value = '';
+                document.getElementById('wm-st-input-keywords-me').value = '';
+                document.getElementById('wm-st-input-keywords-them').value = '';
+                fetchFriendsForSelect();
+            } else if (mode === 'run') {
+                title.textContent = `🤝 Exécution : ${trade.name}`;
+                vCreate.style.display = 'none';
+                vRun.style.display = 'flex';
+
+                document.getElementById('wm-st-lbl-friend').textContent = trade.friendName;
+            }
+        }
+
+        function closeStModal() {
+            const overlay = document.getElementById('wm-st-overlay');
+            if (overlay) overlay.classList.remove('show');
+        }
+
+        // 4. Récupération des Amis et du Rendu Menu
+        async function fetchFriendsForSelect() {
+            const select = document.getElementById('wm-st-input-friend');
+            select.innerHTML = '<option value="">⏳ Chargement...</option>';
+            try {
+                await ensureIdentity();
+                const res = await fetch("https://www.wiki-masters.com/api/friends", { credentials: "include" });
+                const data = await res.json();
+
+                const friends = (data.friendships || [])
+                    .filter(f => f.status === 'accepted')
+                    .map(f => {
+                        const isRequesterMe = f.requester.username === window.wmUsername;
+                        return isRequesterMe ? f.addressee : f.requester;
+                    });
+
+                if (friends.length === 0) { select.innerHTML = '<option value="">Aucun ami trouvé</option>'; return; }
+
+                select.innerHTML = '<option value="">-- Choisir un ami --</option>' +
+                    friends.map(fr => `<option value="${fr.id}" data-name="${fr.username}">${fr.username}</option>`).join('');
+            } catch (e) {
+                select.innerHTML = '<option value="">❌ Erreur chargement amis</option>';
+            }
+        }
+
         function renderSmartTradesList() {
             const container = document.getElementById('wm-st-routines-list');
             if (!container) return;
             const trades = getSmartTrades();
-            
-            if (trades.length === 0) {
-                container.innerHTML = '<div class="wm-tracked-empty">Aucune routine configurée.</div>';
-                return;
-            }
-            
+
+            if (trades.length === 0) { container.innerHTML = '<div class="wm-tracked-empty">Aucune routine configurée.</div>'; return; }
+
             container.innerHTML = trades.map(t => `
                 <div class="wm-st-card">
                     <div class="wm-st-header">
@@ -3960,92 +4188,307 @@
                     </div>
                 </div>
             `).join('');
-
-            // Boutons de suppression
-            container.querySelectorAll('.wm-st-del-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const id = e.currentTarget.dataset.id;
-                    saveSmartTrades(getSmartTrades().filter(tr => tr.id !== id));
-                    renderSmartTradesList();
-                });
-            });
-
-            // Boutons de lancement (Ouvre la vue 3)
-            container.querySelectorAll('.wm-st-run-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const id = e.currentTarget.dataset.id;
-                    const trade = getSmartTrades().find(tr => tr.id === id);
-                    if (trade) {
-                        document.getElementById('wm-st-run-title').textContent = `Exécution : ${trade.name}`;
-                        document.getElementById('wm-st-lbl-friend').textContent = trade.friendName;
-                        showStView('run');
-                        // La logique de scan API viendra ici à la prochaine étape !
-                    }
-                });
-            });
         }
 
-        // --- VUE 2 : Création ---
-        async function fetchFriendsForSelect() {
-            const select = document.getElementById('wm-st-input-friend');
-            select.innerHTML = '<option value="">⏳ Chargement...</option>';
-            try {
-                const res = await fetch("https://www.wiki-masters.com/api/friends", { credentials: "include" });
-                const data = await res.json();
-                
-                // On récupère uniquement les amis acceptés et on trouve le bon profil
-                const friends = data.friendships
-                    .filter(f => f.status === 'accepted')
-                    .map(f => {
-                        const isRequesterMe = f.requester.id === window.wmUserId;
-                        return isRequesterMe ? f.addressee : f.requester;
-                    });
-                
-                if (friends.length === 0) {
-                    select.innerHTML = '<option value="">Aucun ami trouvé</option>';
-                    return;
+        // 5. Moteur d'Auto-Scan API avec Gestion d'Erreur Visible
+        async function fetchCollectionByKeyword(username, keywords, isMe) {
+            if (!keywords || keywords.trim() === '') return []; // Scan ignoré si vide
+
+            // Séparation des mots-clés par des virgules pour faire une recherche par terme
+            const kws = keywords.split(',').map(k => k.trim()).filter(k => k);
+            let foundCardsMap = new Map(); // Utilisation d'une Map pour éviter les doublons si une carte matche 2 mots-clés différents
+
+            for (const kw of kws) {
+                const encodedKw = encodeURIComponent(kw);
+
+                // On boucle sur les pages du résultat de recherche (max 5 pages de résultats purs)
+                for (let p = 0; p < 5; p++) {
+                    try {
+                        const url = isMe
+                            ? `https://www.wiki-masters.com/api/my-collection?sort=rarity&stats=0&page=${p}&q=${encodedKw}`
+                            : `https://www.wiki-masters.com/api/profile/${username}/collection?sort=rarity&page=${p}&q=${encodedKw}`;
+
+                        const res = await fetch(url, { credentials: "include" });
+
+                        if (!res.ok) {
+                            const errText = await res.text();
+                            let errMsg = `Erreur HTTP ${res.status}`;
+                            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e){}
+                            throw new Error(errMsg);
+                        }
+
+                        const data = await res.json();
+                        if (!data.collection || data.collection.length === 0) break; // Fin des résultats pour ce mot-clé
+
+                        // Le serveur a déjà fait le tri, on ajoute tout ce qu'il renvoie
+                        data.collection.forEach(c => {
+                            if (!foundCardsMap.has(c.id)) foundCardsMap.set(c.id, c);
+                        });
+
+                        // Si la page contient moins de 20 cartes, c'est forcément la dernière page de la recherche
+                        if (data.collection.length < 20) break;
+
+                    } catch (e) {
+                        console.error(`[WM-Trade] Erreur scan page ${p} pour ${username} avec le mot-clé "${kw}":`, e);
+                        if (p === 0) throw e; // On remonte l'erreur uniquement si c'est la toute première page qui plante
+                        break;
+                    }
                 }
-                
-                select.innerHTML = '<option value="">-- Choisir un ami --</option>' + 
-                    friends.map(fr => `<option value="${fr.id}" data-name="${fr.username}">${fr.username}</option>`).join('');
-            } catch (e) {
-                select.innerHTML = '<option value="">❌ Erreur chargement</option>';
+            }
+            return Array.from(foundCardsMap.values());
+        }
+
+        async function runAutoScan() {
+            if (!stCurrentTrade) return;
+            const btn = document.getElementById('wm-st-run-start');
+            const status = document.getElementById('wm-st-run-status');
+
+            try {
+                btn.disabled = true;
+                btn.textContent = "⏳ Scan en cours...";
+                status.textContent = "1/3 : Vérification de votre profil...";
+                status.style.color = "#60a5fa";
+
+                const isIdentified = await ensureIdentity();
+                if (!isIdentified) throw new Error("Impossible de trouver votre pseudo.");
+
+                status.textContent = `2/3 : Recherche chez ${stCurrentTrade.friendName}...`;
+                // isMe = false
+                const theirCards = await fetchCollectionByKeyword(stCurrentTrade.friendName, stCurrentTrade.keywordsThem, false);
+
+                status.textContent = "3/3 : Recherche dans votre collection...";
+                // isMe = true
+                const myCards = await fetchCollectionByKeyword(window.wmUsername, stCurrentTrade.keywordsMe, true);
+
+                // Ajout au panier global (sans doublons avec les cartes déjà présentes dans les listes)
+                stSelectedThem = [...stSelectedThem, ...theirCards.filter(nc => !stSelectedThem.find(oc => oc.id === nc.id))];
+                stSelectedMe = [...stSelectedMe, ...myCards.filter(nc => !stSelectedMe.find(oc => oc.id === nc.id))];
+
+                updateTradeRunUI();
+
+                btn.disabled = false;
+                btn.textContent = "🔄 Relancer le scan";
+                status.textContent = `✅ Scan terminé : ${myCards.length} cartes trouvées chez vous, ${theirCards.length} chez lui.`;
+                status.style.color = "#10b981";
+            } catch (error) {
+                console.error("[WM-Trade] Erreur Auto-Scan:", error);
+                btn.disabled = false;
+                btn.textContent = "🔄 Réessayer";
+                status.textContent = `❌ Erreur : ${error.message}`;
+                status.style.color = "#ef4444";
             }
         }
 
-        // Ouvrir la création
-        document.getElementById('wm-st-btn-new').addEventListener('click', () => {
-            document.getElementById('wm-st-input-name').value = '';
-            document.getElementById('wm-st-input-keywords-me').value = '';
-            document.getElementById('wm-st-input-keywords-them').value = '';
-            fetchFriendsForSelect();
-            showStView('create');
+        // 6. Délégation d'événements Globale
+        document.addEventListener('click', (e) => {
+            // Création
+            if (e.target.id === 'wm-st-btn-new') openStModal('create');
+            // Fermeture
+            else if (e.target.id === 'wm-st-overlay-close' || e.target === stOverlay) stOverlay.classList.remove('show');
+            // Sauvegarde
+            else if (e.target.id === 'wm-st-btn-save') {
+                const name = document.getElementById('wm-st-input-name').value.trim();
+                const friendSelect = document.getElementById('wm-st-input-friend');
+                const friendId = friendSelect.value;
+                const friendName = friendSelect.options[friendSelect.selectedIndex]?.dataset.name || 'Ami inconnu';
+                const kwThem = document.getElementById('wm-st-input-keywords-them').value.trim();
+                const kwMe = document.getElementById('wm-st-input-keywords-me').value.trim();
+
+                if (!name || !friendId) return alert("Le nom et l'ami sont obligatoires !");
+
+                const trades = getSmartTrades();
+                trades.push({ id: Date.now().toString(), name, friendId, friendName, keywordsThem: kwThem, keywordsMe: kwMe });
+                saveSmartTrades(trades);
+                renderSmartTradesList();
+                stOverlay.classList.remove('show');
+            }
+            // Supprimer Routine
+            else if (e.target.closest('.wm-st-del-btn')) {
+                const btn = e.target.closest('.wm-st-del-btn');
+                saveSmartTrades(getSmartTrades().filter(tr => tr.id !== btn.dataset.id));
+                renderSmartTradesList();
+            }
+            // Lancer Routine depuis le petit menu
+            // Clic sur l'ouverture d'une routine (pour injecter les titres dans les tooltips ❓)
+            else if (e.target.closest('.wm-st-run-btn')) {
+                const btn = e.target.closest('.wm-st-run-btn');
+                const trade = getSmartTrades().find(tr => tr.id === btn.dataset.id);
+                if (trade) {
+                    stCurrentTrade = trade;
+                    stSelectedMe = [];
+                    stSelectedThem = [];
+
+                    // Assignation propre des tooltips au survol
+                    document.getElementById('wm-st-header-me').title = `Filtre actif : ${trade.keywordsMe || 'Aucun'}`;
+                    document.getElementById('wm-st-header-them').title = `Filtre actif : ${trade.keywordsThem || 'Aucun'}`;
+
+                    document.getElementById('wm-st-run-status').textContent = "Prêt à scanner.";
+                    document.getElementById('wm-st-run-status').style.color = "#fbbf24";
+
+                    updateTradeRunUI();
+                    openStModal('run', trade);
+                }
+            }
+
+            // Gestion de la suppression d'une carte avec mini-confirmation
+            else if (e.target.closest('.wm-trade-del-trigger')) {
+                const btn = e.target.closest('.wm-trade-del-trigger');
+                const side = btn.dataset.side;
+                const idx = parseInt(btn.dataset.idx, 10);
+
+                if (btn.dataset.confirm === "true") {
+                    if (side === 'me') stSelectedMe.splice(idx, 1);
+                    else stSelectedThem.splice(idx, 1);
+                    updateTradeRunUI();
+                } else {
+                    btn.dataset.confirm = "true";
+                    btn.textContent = "Confirmer ?";
+                    btn.style.color = "#fbbf24";
+                    setTimeout(() => {
+                        if (btn) {
+                            btn.dataset.confirm = "false";
+                            btn.textContent = "✕";
+                            btn.style.color = "#ef4444";
+                        }
+                    }, 2500);
+                }
+            }
+
+            // Boutons "+ Parcourir" (Ouvre une alerte / input temporaire pour ajouter par ID ou mot-clé manuel en attendant le navigateur complet)
+            else if (e.target.id === 'wm-run-btn-browse-me' || e.target.id === 'wm-run-btn-browse-them') {
+                const side = e.target.id.includes('me') ? 'me' : 'them';
+                const keyword = prompt(`Entrez un mot-clé précis pour ajouter des cartes (${side === 'me' ? 'vos' : 'ses'} cartes) :`);
+                if (keyword) {
+                    const username = side === 'me' ? window.wmUsername : stCurrentTrade.friendName;
+                    fetchCollectionByKeyword(username, keyword, side === 'me').then(cards => {
+                        if (cards.length === 0) {
+                            alert("Aucune carte trouvée avec ce mot-clé.");
+                            return;
+                        }
+                        if (side === 'me') {
+                            stSelectedMe = [...stSelectedMe, ...cards.filter(nc => !stSelectedMe.find(oc => oc.id === nc.id))];
+                        } else {
+                            stSelectedThem = [...stSelectedThem, ...cards.filter(nc => !stSelectedThem.find(oc => oc.id === nc.id))];
+                        }
+                        updateTradeRunUI();
+                    });
+                }
+            }
+
+            // Boutons d'Exécution interne
+            else if (e.target.id === 'wm-st-run-start') {
+                runAutoScan();
+            }
+            // Croix pour enlever une carte
+            else if (e.target.closest('.wm-trade-item-remove')) {
+                const btn = e.target.closest('.wm-trade-item-remove');
+                const side = btn.dataset.side;
+                const idx = parseInt(btn.dataset.idx, 10);
+                if (side === 'me') stSelectedMe.splice(idx, 1);
+                else stSelectedThem.splice(idx, 1);
+                updateTradeRunUI();
+            }
+
+            // Clic sur le bouton Envoyer de la modale Trade
+            else if (e.target.id === 'wm-st-run-send') {
+                sendSmartTrade();
+            }
+
+            // Clic sur la loupe 🔍 pour la preview
+            else if (e.target.closest('.wm-trade-preview-trigger')) {
+                const btn = e.target.closest('.wm-trade-preview-trigger');
+                const side = btn.dataset.side;
+                const idx = parseInt(btn.dataset.idx, 10);
+
+                // On récupère directement les infos depuis l'objet JSON déjà en mémoire
+                const cardObj = side === 'me' ? stSelectedMe[idx].card : stSelectedThem[idx].card;
+
+                // On injecte le HTML de la modale de preview s'il n'existe pas encore
+                let prevOverlay = document.getElementById('wm-preview-overlay');
+                if (!prevOverlay) {
+                    prevOverlay = document.createElement('div');
+                    prevOverlay.id = 'wm-preview-overlay';
+                    prevOverlay.innerHTML = `
+                        <div class="wm-preview-box">
+                            <button class="wm-preview-close" id="wm-preview-close-btn">✕</button>
+                            <div class="wm-preview-title" id="wm-prev-title">Titre</div>
+                            <div class="wm-preview-img-container"><img id="wm-prev-img" src="" alt=""></div>
+                            <div class="wm-preview-stats">
+                                <span style="color:#f87171;">⚔️ ATK: <span id="wm-prev-atk">0</span></span>
+                                <span style="color:#60a5fa;">🛡️ DEF: <span id="wm-prev-def">0</span></span>
+                            </div>
+                            <div class="wm-preview-desc" id="wm-prev-desc">Desc</div>
+                        </div>
+                    `;
+                    document.body.appendChild(prevOverlay);
+
+                    document.getElementById('wm-preview-close-btn').addEventListener('click', () => prevOverlay.classList.remove('show'));
+                    prevOverlay.addEventListener('click', (ev) => { if (ev.target === prevOverlay) prevOverlay.classList.remove('show'); });
+                }
+
+                // Remplissage des données
+                document.getElementById('wm-prev-title').textContent = cardObj.wikipedia_title || 'Inconnu';
+                document.getElementById('wm-prev-img').src = cardObj.image_url || '';
+                document.getElementById('wm-prev-atk').textContent = cardObj.atk || '0';
+                document.getElementById('wm-prev-def').textContent = cardObj.def || '0';
+                document.getElementById('wm-prev-desc').textContent = cardObj.category || 'Aucune description.';
+
+                prevOverlay.classList.add('show');
+            }
+
         });
 
-        // Sauvegarder la création
-        document.getElementById('wm-st-btn-save').addEventListener('click', () => {
-            const name = document.getElementById('wm-st-input-name').value.trim();
-            const friendSelect = document.getElementById('wm-st-input-friend');
-            const friendId = friendSelect.value;
-            const friendName = friendSelect.options[friendSelect.selectedIndex]?.dataset.name || 'Ami inconnu';
-            const kwThem = document.getElementById('wm-st-input-keywords-them').value.trim();
-            const kwMe = document.getElementById('wm-st-input-keywords-me').value.trim();
+        async function sendSmartTrade() {
+            if (!stCurrentTrade) return;
+            const btnSend = document.getElementById('wm-st-run-send');
+            const status = document.getElementById('wm-st-run-status');
+            const myUserId = window.wmUserId || "";
 
-            if (!name || !friendId) return alert("Le nom et l'ami sont obligatoires !");
+            const items = [
+                ...stSelectedMe.map(c => ({ user_card_id: c.id, card_id: c.card_id || c.card?.id, offered_by: myUserId })),
+                ...stSelectedThem.map(c => ({ user_card_id: c.id, card_id: c.card_id || c.card?.id, offered_by: stCurrentTrade.friendId }))
+            ];
 
-            const trades = getSmartTrades();
-            trades.push({
-                id: Date.now().toString(), name, friendId, friendName, keywordsThem: kwThem, keywordsMe: kwMe
-            });
-            saveSmartTrades(trades);
-            
-            renderSmartTradesList();
-            showStView('main');
-        });
+            const initiatorWb = parseInt(document.getElementById('wm-run-my-wb').value, 10) || 0;
+            const recipientWb = parseInt(document.getElementById('wm-run-their-wb').value, 10) || 0;
 
-        // --- BOUTONS DE FERMETURE DES VUES ---
-        document.getElementById('wm-st-create-close').addEventListener('click', () => showStView('main'));
-        document.getElementById('wm-st-run-close').addEventListener('click', () => showStView('main'));
+            const payload = {
+                recipient_id: stCurrentTrade.friendId,
+                items: items,
+                initiator_wikibidous: initiatorWb,
+                recipient_wikibidous: recipientWb
+            };
+
+            try {
+                btnSend.disabled = true;
+                btnSend.textContent = "⏳ Envoi...";
+                status.textContent = "Transmission de l'offre au serveur...";
+                status.style.color = "#60a5fa";
+
+                const headers = { "accept": "*/*", "content-type": "application/json" };
+                // Fix apikey : On vérifie proprement si l'objet et la clé existent
+                if (window.wmAuth?.apikey) headers["apikey"] = window.wmAuth.apikey;
+                if (window.wmAuth?.token) headers["authorization"] = window.wmAuth.token;
+
+                const res = await fetch("https://www.wiki-masters.com/api/trades", {
+                    method: "POST", headers: headers, body: JSON.stringify(payload), credentials: "include"
+                });
+
+                if (!res.ok) throw new Error(`Erreur HTTP ${res.status}`);
+
+                status.textContent = "🎉 Offre envoyée !";
+                status.style.color = "#10b981";
+                btnSend.textContent = "Envoyé !";
+                setTimeout(() => closeStModal(), 1500);
+
+            } catch (error) {
+                btnSend.disabled = false;
+                btnSend.textContent = "Envoyer";
+                status.textContent = `❌ Échec: ${error.message}`;
+                status.style.color = "#ef4444";
+            }
+        }
+
 
         renderSmartTradesList();
         renderPatchNotes();
@@ -4094,7 +4537,7 @@
         if (e.key.toLowerCase() === 'i') {
             e.preventDefault();
             const targetCard = document.querySelector('.w-72:hover') || document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72');
-            
+
             if (targetCard) {
                 const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
                 if (bulkBtn && !bulkBtn.disabled) {
@@ -4102,8 +4545,8 @@
                     bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                 }
             }
-            
-            // On laisse 200ms (au lieu de 80) pour que le bouton Bulk devienne vert 
+
+            // On laisse 200ms (au lieu de 80) pour que le bouton Bulk devienne vert
             // et que l'Observer déverrouille son verrou de sécurité avant de tourner la page.
             setTimeout(() => {
                 console.log("[WM-Debug] ⏩ Passage à la carte suivante...");
@@ -4117,18 +4560,18 @@
                         continueBtn.click();
                     }
                 }
-            }, 200); 
+            }, 200);
             return;
         }
         // ==========================================
         // 2. NAVIGATION DANS LA COLLECTION (Modal)
         // ==========================================
         const modal = typeof getOpenCardModal === 'function' ? getOpenCardModal() : null;
-        
+
         if (modal) {
             // Si le modal est ouvert, on gère UNIQUEMENT la navigation inter-cartes
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-            
+
             e.preventDefault();
             e.stopPropagation();
 
