@@ -40,6 +40,17 @@
         preview: null,      // { toAdd, toRemove }
         startedAt: 0
     };
+    
+    // ============================================================
+    // SMART TRADES (Routines sauvegardées)
+    // ============================================================
+    function getSmartTrades() {
+        try { return JSON.parse(localStorage.getItem('wmSmartTrades') || '[]'); }
+        catch { return []; }
+    }
+    function saveSmartTrades(trades) { 
+        localStorage.setItem('wmSmartTrades', JSON.stringify(trades)); 
+    }
 
     // ============================================================
     // CACHE PRIX (nouvelle structure allégée)
@@ -1407,25 +1418,28 @@
         .wm-patch-changes { margin: 0; padding-left: 16px; font-size: 11px; color: #cbd5e1; }
         .wm-patch-changes li { margin-bottom: 4px; line-height: 1.3; }
 
-        /* ===== Smart Trade ===== */
-        .wm-trade-container { display: flex; gap: 8px; margin-bottom: 12px; }
-        .wm-trade-side { flex: 1; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+        /* ===== Smart Trades (Routines) ===== */
+        .wm-st-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 4px; }
+        .wm-st-card { background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; padding: 10px; transition: border-color 0.15s; }
+        .wm-st-card:hover { border-color: rgba(99, 102, 241, 0.5); }
+        .wm-st-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 4px; }
+        .wm-st-title { font-weight: 700; color: #e5e7eb; font-size: 13px; }
+        .wm-st-friend { font-size: 11px; color: #a5b4fc; background: rgba(79, 70, 229, 0.15); padding: 2px 6px; border-radius: 4px; }
+        .wm-st-rules { font-size: 10px; color: #94a3b8; margin-bottom: 8px; display: flex; flex-direction: column; gap: 2px; }
+        .wm-st-rule span { color: #cbd5e1; font-weight: 600; }
+        .wm-st-actions { display: flex; gap: 6px; }
+
+        /* ===== Modales internes (Création & Exécution) ===== */
+        .wm-internal-modal { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.98); z-index: 10; display: none; flex-direction: column; padding: 12px; animation: fadeIn 0.15s; }
+        .wm-internal-modal.show { display: flex; }
+        .wm-trade-container { display: flex; gap: 8px; margin: 8px 0; flex: 1; min-height: 0; }
+        .wm-trade-side { flex: 1; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
         .wm-trade-header { font-size: 11px; color: #cbd5e1; font-weight: 700; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 4px; }
         .wm-trade-val { color: #fbbf24; font-family: monospace; }
-        .wm-trade-list { flex: 1; min-height: 60px; max-height: 120px; overflow-y: auto; background: rgba(15, 23, 42, 0.5); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 4px; }
+        .wm-trade-list { flex: 1; overflow-y: auto; background: rgba(15, 23, 42, 0.5); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 4px; }
         .wm-trade-item { display: flex; justify-content: space-between; align-items: center; background: rgba(51, 65, 85, 0.8); padding: 4px 6px; border-radius: 4px; font-size: 10px; color: #e5e7eb; }
         .wm-trade-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
         .wm-trade-item-remove { color: #ef4444; cursor: pointer; font-weight: bold; padding: 0 4px; }
-        .wm-trade-item-remove:hover { color: #f87171; }
-        
-        /* Collection Browser (Superposé) */
-        #wm-trade-browser { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.98); z-index: 10; display: none; flex-direction: column; padding: 12px; }
-        #wm-trade-browser.show { display: flex; animation: fadeIn 0.15s; }
-        .wm-browser-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; overflow-y: auto; flex: 1; margin: 8px 0; padding-right: 4px; }
-        .wm-browser-card { background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 6px; padding: 6px; text-align: center; cursor: pointer; transition: transform 0.1s; display: flex; flex-direction: column; gap: 4px; }
-        .wm-browser-card:hover { transform: scale(1.02); background: rgba(51, 65, 85, 0.9); }
-        .wm-browser-card.selected { border-color: #10b981; background: rgba(16, 185, 129, 0.2); }
-        .wm-browser-pagination { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-family: monospace; }
     `);
 
     // ============================================================
@@ -3536,63 +3550,87 @@
             <!-- ONGLET SMART TRADE -->
             <div class="wm-tab-content hidden" data-tab="trade" style="position: relative;">
                 
-                <div class="wm-section-title">Nouvel Échange Intelligent</div>
-                
-                <div class="wm-input-group" style="margin-bottom:12px;">
-                    <select id="wm-trade-friend-select" class="wm-panel-input">
-                        <option value="">⏳ Chargement des amis...</option>
-                    </select>
+                <!-- VUE 1 : LISTE DES ROUTINES -->
+                <div id="wm-st-main-view" style="display: flex; flex-direction: column; height: 100%;">
+                    <div class="wm-section-title">Mes Routines d'Échange</div>
+                    <div class="wm-st-list" id="wm-st-routines-list">
+                        <div class="wm-tracked-empty">Aucune routine configurée.</div>
+                    </div>
+                    <button id="wm-st-btn-new" class="wm-panel-btn" style="margin-top: 10px; width: 100%;">+ Créer une routine d'échange</button>
                 </div>
 
-                <div class="wm-trade-container">
-                    <!-- Colonne MOI -->
-                    <div class="wm-trade-side">
-                        <div class="wm-trade-header">
-                            <span>Moi</span>
-                            <span class="wm-trade-val" id="wm-my-trade-val">0 WB</span>
-                        </div>
-                        <div class="wm-trade-list" id="wm-my-trade-list">
-                            <!-- Les cartes s'ajouteront ici -->
-                        </div>
-                        <button class="wm-panel-btn ghost" id="wm-btn-browse-me" style="padding:4px; font-size:10px;">+ Parcourir ma collection</button>
-                        <input type="number" id="wm-my-trade-wb" class="wm-panel-input" placeholder="Ajouter WB" style="padding:4px; margin-top:2px;">
-                    </div>
-
-                    <!-- Colonne AMI -->
-                    <div class="wm-trade-side">
-                        <div class="wm-trade-header">
-                            <span>L'ami</span>
-                            <span class="wm-trade-val" id="wm-their-trade-val">0 WB</span>
-                        </div>
-                        <div class="wm-trade-list" id="wm-their-trade-list">
-                            <!-- Les cartes s'ajouteront ici -->
-                        </div>
-                        <button class="wm-panel-btn ghost" id="wm-btn-browse-them" style="padding:4px; font-size:10px;" disabled>+ Parcourir sa collection</button>
-                        <input type="number" id="wm-their-trade-wb" class="wm-panel-input" placeholder="Demander WB" style="padding:4px; margin-top:2px;" disabled>
-                    </div>
-                </div>
-
-                <button id="wm-trade-send-btn" class="wm-panel-btn" style="width: 100%;" disabled>Envoyer l'offre (Écart : - WB)</button>
-
-                <!-- NAVIGATEUR DE COLLECTION (Caché par défaut) -->
-                <div id="wm-trade-browser">
+                <!-- VUE 2 : CRÉATION D'UNE ROUTINE (Cachée) -->
+                <div id="wm-st-create-view" class="wm-internal-modal">
                     <div class="wm-panel-header" style="padding: 0 0 8px 0; background: none; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                        <span class="wm-panel-header-title" id="wm-browser-title">Collection</span>
-                        <button class="wm-panel-close" id="wm-browser-close">✕</button>
+                        <span class="wm-panel-header-title">Nouvelle Routine</span>
+                        <button class="wm-panel-close" id="wm-st-create-close">✕</button>
                     </div>
                     
-                    <input type="text" id="wm-browser-search" class="wm-panel-input" placeholder="Chercher une carte..." style="margin-top:8px;">
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px; overflow-y: auto;">
+                        <div>
+                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Nom du Trade</label>
+                            <input type="text" id="wm-st-input-name" class="wm-panel-input" placeholder="Ex: Razzia d'Astéroïdes" style="width:100%; margin-top:4px;">
+                        </div>
+                        <div>
+                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Ami cible</label>
+                            <select id="wm-st-input-friend" class="wm-panel-input" style="width:100%; margin-top:4px;">
+                                <option value="">⏳ Chargement de la liste d'amis...</option>
+                            </select>
+                        </div>
+                        <div style="background: rgba(79, 70, 229, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; p: 8px; padding: 8px;">
+                            <label style="font-size:10px; color:#a5b4fc; font-weight:bold;">Mots-clés de SES cartes (Que je veux)</label>
+                            <input type="text" id="wm-st-input-keywords-them" class="wm-panel-input" placeholder="Ex: astéroïde, espace, lune" style="width:100%; margin-top:4px;">
+                        </div>
+                        <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; padding: 8px;">
+                            <label style="font-size:10px; color:#94a3b8; font-weight:bold;">Mots-clés de MES cartes (À donner)</label>
+                            <input type="text" id="wm-st-input-keywords-me" class="wm-panel-input" placeholder="Ex: double, commun" style="width:100%; margin-top:4px;">
+                        </div>
+                    </div>
                     
-                    <div class="wm-browser-grid" id="wm-browser-grid">
-                        <div class="wm-tracked-empty" style="grid-column: span 2;">Chargement de la page...</div>
+                    <button id="wm-st-btn-save" class="wm-panel-btn" style="margin-top: auto;">Enregistrer la routine</button>
+                </div>
+
+                <!-- VUE 3 : EXÉCUTION D'UNE ROUTINE (Cachée) -->
+                <div id="wm-st-run-view" class="wm-internal-modal">
+                    <div class="wm-panel-header" style="padding: 0 0 8px 0; background: none; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <span class="wm-panel-header-title" id="wm-st-run-title">Exécution</span>
+                        <button class="wm-panel-close" id="wm-st-run-close">✕</button>
                     </div>
 
-                    <div class="wm-browser-pagination">
-                        <button class="wm-panel-btn ghost" id="wm-browser-prev" style="padding: 4px 8px;">← Préc.</button>
-                        <span id="wm-browser-page-info">Page 1 / ?</span>
-                        <button class="wm-panel-btn ghost" id="wm-browser-next" style="padding: 4px 8px;">Suiv. →</button>
+                    <div style="font-size: 11px; color: #fbbf24; text-align: center; margin-top: 6px;" id="wm-st-run-status">
+                        En attente du lancement...
+                    </div>
+
+                    <div class="wm-trade-container">
+                        <!-- Colonne MOI -->
+                        <div class="wm-trade-side">
+                            <div class="wm-trade-header">
+                                <span>Moi (Filtre: <span id="wm-st-lbl-kme"></span>)</span>
+                                <span class="wm-trade-val" id="wm-run-my-val">0 WB</span>
+                            </div>
+                            <div class="wm-trade-list" id="wm-run-my-list"></div>
+                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-me" style="padding:4px; font-size:10px;">+ Parcourir</button>
+                            <input type="number" id="wm-run-my-wb" class="wm-panel-input" placeholder="WB ajoutés" style="padding:4px; margin-top:2px;">
+                        </div>
+
+                        <!-- Colonne AMI -->
+                        <div class="wm-trade-side">
+                            <div class="wm-trade-header">
+                                <span id="wm-st-lbl-friend">L'ami</span>
+                                <span class="wm-trade-val" id="wm-run-their-val">0 WB</span>
+                            </div>
+                            <div class="wm-trade-list" id="wm-run-their-list"></div>
+                            <button class="wm-panel-btn ghost" id="wm-run-btn-browse-them" style="padding:4px; font-size:10px;">+ Parcourir</button>
+                            <input type="number" id="wm-run-their-wb" class="wm-panel-input" placeholder="WB demandés" style="padding:4px; margin-top:2px;">
+                        </div>
+                    </div>
+
+                    <div style="display:flex; gap:6px; margin-top:auto;">
+                        <button id="wm-st-run-start" class="wm-panel-btn ghost" style="flex:1;">🔄 Lancer l'auto-scan</button>
+                        <button id="wm-st-run-send" class="wm-panel-btn" style="flex:1.5; background: linear-gradient(135deg, #10b981, #059669);" disabled>Envoyer (Écart: -)</button>
                     </div>
                 </div>
+
             </div>
 
             <div class="wm-tab-content hidden" data-tab="prefs">
