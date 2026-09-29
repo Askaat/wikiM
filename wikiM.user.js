@@ -9,6 +9,19 @@
     // ============================================================
     // ÉTAT GLOBAL
     // ============================================================
+    const WM_PATCH_NOTES = [
+        {
+            version: "2.0.0",
+            date: "29/09/2026 - 08:45",
+            changes: [
+                "Ajout de l'onglet Patch Notes avec historique.",
+                "Ajout des MàJ automatique via github",
+                "Ajout du changement de pages avec les flèches dans la collection (des fois ça déconne un peu)",
+                "Raccourci CTRL+I transformé juste en I"
+            ]
+        }
+    ]
+    
     window.wmPrices = {};
     window.wmFetching = new Set();
     window.wmProcessedCards = new Set();
@@ -1376,6 +1389,23 @@
         }
         #wm-trade-helper .wm-th-side { display: flex; flex-direction: column; gap: 3px; }
         #wm-trade-helper .wm-th-count { font-size: 12px; color: #cbd5e1; font-weight: 500; }
+
+        /* ===== Patch Notes ===== */
+        .wm-patch-item {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 8px; padding: 10px; margin-bottom: 8px;
+        }
+        .wm-patch-item:last-child { margin-bottom: 0; }
+        .wm-patch-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 4px;
+        }
+        .wm-patch-version { font-weight: 700; color: #a5b4fc; font-size: 13px; }
+        .wm-patch-date { font-family: monospace; color: #94a3b8; font-size: 10px; }
+        .wm-patch-changes { margin: 0; padding-left: 16px; font-size: 11px; color: #cbd5e1; }
+        .wm-patch-changes li { margin-bottom: 4px; line-height: 1.3; }
     `);
 
     // ============================================================
@@ -3377,6 +3407,10 @@
                     <span class="wm-tab-icon">⚙️</span>
                     <span>Préfs</span>
                 </button>
+                <button class="wm-tab" data-tab="patchnotes">
+                    <span class="wm-tab-icon">📝</span>
+                    <span>MÀJ</span>
+                </button>
             </div>
 
             <div class="wm-tab-content" data-tab="tracked">
@@ -3486,6 +3520,13 @@
                     <div class="wm-section-title">Délais</div>
                     <div class="wm-pref-row"><label for="wm-pref-trigger">Délai par défaut (s)</label><input type="number" id="wm-pref-trigger" value="${getPrefs().defaultTriggerBefore}" min="5" max="3600"></div>
                     <div class="wm-pref-row"><label for="wm-pref-refresh">Refresh end_at (s)</label><input type="number" id="wm-pref-refresh" value="${getPrefs().refreshInterval}" min="10" max="300"></div>
+                </div>
+            </div>
+
+            <div class="wm-tab-content hidden" data-tab="patchnotes">
+                <div>
+                    <div class="wm-section-title">Historique des mises à jour</div>
+                    <div id="wm-patch-notes-list" style="overflow-y: auto; max-height: 380px; padding-right: 4px;"></div>
                 </div>
             </div>
         `;
@@ -3728,13 +3769,32 @@
             }
         });
 
+        // Rendu des Patch Notes
+        function renderPatchNotes() {
+            const container = document.getElementById('wm-patch-notes-list');
+            if (!container) return;
+            
+            // Le tableau est parcouru dans l'ordre (le plus récent en premier si tu les ajoutes en haut du tableau WM_PATCH_NOTES)
+            container.innerHTML = WM_PATCH_NOTES.map(pn => `
+                <div class="wm-patch-item">
+                    <div class="wm-patch-header">
+                        <span class="wm-patch-version">v${pn.version}</span>
+                        <span class="wm-patch-date">${pn.date}</span>
+                    </div>
+                    <ul class="wm-patch-changes">
+                        ${pn.changes.map(change => `<li>${change}</li>`).join('')}
+                    </ul>
+                </div>
+            `).join('');
+        }
 
+        renderPatchNotes();
         initTagsTab();
         updateBulkUI();
         renderTrackedAuctions();
         updateTrackBadge();
         renderBalanceUI();
-        logToPanel("V56 Démarrée. Sniper par enchère disponible.");
+        logToPanel("V2.0.0 Démarrée.");
     }
 
     // ============================================================
