@@ -12,9 +12,9 @@
     const WM_PATCH_NOTES = [
         {
             version: "2.1.6",
-            date: "29/09/2026 - 17:40",
+            date: "30/09/2026 - 12:30",
             changes: [
-                "Fix tag auto, à priori fonctionnel?"
+                "Ajout de groupes de règles et une fonction d'export/import"
             ]
         },
         {
@@ -251,19 +251,14 @@
 
             // 1. Récupération des user_card_id physiques
             const physicalCards = await supabaseRequestWithRetry(
-                'GET', 
+                'GET',
                 `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
             );
 
             if (!physicalCards || !Array.isArray(physicalCards)) throw new Error("Impossible de récupérer les cartes physiques.");
 
             // 2. Chargement de TES règles avancées
-            const rules = JSON.parse(localStorage.getItem('wmTagRules') || '[]');
-            const activeRules = rules.filter(r => r.enabled !== false);
-            if (activeRules.length === 0) {
-                console.log("[WM-Tags] Aucune règle active trouvée.");
-                return;
-            }
+            const activeRules = getFlatRules();
 
             // 3. Croisement des données et envoi des requêtes
             for (const pc of pulledCards) {
@@ -298,7 +293,7 @@
                         user_card_id: physical.id,
                         tag_id: tagId
                     });
-                    
+
                     // Récupération du nom du tag pour le log
                     const tagName = window.wmTagsCache.find(t => t.id === tagId)?.name || 'Tag inconnu';
                     console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${title}`);
@@ -2520,21 +2515,41 @@
     }
 
     // ============================================================
-    // MOTEUR DE RÈGLES D'AUTO-TAGGING
+    // MOTEUR DE RÈGLES D'AUTO-TAGGING (GROUPES & IMPORT/EXPORT)
     // ============================================================
-    const WM_TAG_RULES_KEY = 'wmTagRules';
+    const WM_TAG_GROUPS_KEY = 'wmTagGroups';
 
-    function getTagRules() {
-        try { return JSON.parse(localStorage.getItem(WM_TAG_RULES_KEY) || '[]'); }
-        catch { return []; }
+    function getTagGroups() {
+        try {
+            let groups = JSON.parse(localStorage.getItem(WM_TAG_GROUPS_KEY));
+            if (!groups || !Array.isArray(groups)) {
+                // Migration automatique : on récupère tes anciennes règles
+                const oldRules = JSON.parse(localStorage.getItem('wmTagRules') || '[]');
+                if (oldRules.length > 0) {
+                    groups = [{ id: 'g_' + Date.now(), name: 'Mes Anciennes Règles', isOpen: true, rules: oldRules }];
+                    saveTagGroups(groups);
+                } else {
+                    groups = [];
+                }
+            }
+            return groups;
+        } catch { return []; }
     }
-    function saveTagRules(rules) {
-        localStorage.setItem(WM_TAG_RULES_KEY, JSON.stringify(rules));
+
+    function saveTagGroups(groups) {
+        localStorage.setItem(WM_TAG_GROUPS_KEY, JSON.stringify(groups));
+    }
+
+    function getFlatRules() {
+        // Aplatit tous les dossiers pour obtenir une liste simple, et ignore les règles sans étiquette
+        return getTagGroups()
+            .flatMap(g => g.rules || [])
+            .filter(r => r.enabled !== false && r.tagId && r.tagId !== '');
     }
 
     const WM_RULE_FIELDS = {
         'avgPrice': {
-            label: 'Prix moyen (de la rareté possédée)',
+            label: 'Prix moyen',
             type: 'number',
             getter: (card, prices) => {
                 return wmGetPriceFor(card.title, card.rarity);
@@ -2543,7 +2558,7 @@
         'rarity': { label: 'Rareté', type: 'enum', values: ['C','PC','R','SR','UR','L'],
                    getter: (card) => card.rarity },
         'title': { label: 'Titre', type: 'string', getter: (card) => card.title || '' },
-        'category': { label: 'Catégorie', type: 'string', getter: (card) => card.category || '' }
+        'category': { label: 'Description', type: 'string', getter: (card) => card.category || '' }
     };
 
     const WM_RULE_OPERATORS = {
@@ -2553,8 +2568,21 @@
         '<=': (a, b) => Number(a) <= Number(b),
         '=':  (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
         '!=': (a, b) => String(a).toLowerCase() !== String(b).toLowerCase(),
-        'contains':     (a, b) => String(a).toLowerCase().includes(String(b).toLowerCase()),
-        'not_contains': (a, b) => !String(a).toLowerCase().includes(String(b).toLowerCase())
+        'contains': (a, b) => {
+            const valA = String(a).toLowerCase();
+            // Découpe les termes séparés par ";" et retire les espaces vides
+            const terms = String(b).toLowerCase().split(';').map(t => t.trim()).filter(t => t);
+            if (terms.length === 0) return true;
+            // Retourne vrai si AU MOINS UN terme est présent (Logique OU)
+            return terms.some(term => valA.includes(term));
+        },
+        'not_contains': (a, b) => {
+            const valA = String(a).toLowerCase();
+            const terms = String(b).toLowerCase().split(';').map(t => t.trim()).filter(t => t);
+            if (terms.length === 0) return true;
+            // Retourne vrai si AUCUN des termes n'est présent (Logique ET)
+            return terms.every(term => !valA.includes(term));
+        }
     };
 
 
@@ -4931,6 +4959,86 @@
                 }
             });
         }
+        // ---> INJECTION DES BOUTONS GROUPES ET MODALE IMPORT/EXPORT <---
+        const oldAddRuleBtn = document.getElementById('wm-add-rule-btn');
+        if (oldAddRuleBtn) {
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = "display:flex; gap:6px; margin-bottom:8px;";
+            wrapper.innerHTML = `
+                <button id="wm-btn-add-group" class="wm-panel-btn" style="flex:1;">📁 Nouveau Groupe</button>
+                <button id="wm-btn-ie-modal" class="wm-panel-btn ghost" style="flex:1;">⚙️ Import / Export</button>
+            `;
+            oldAddRuleBtn.replaceWith(wrapper);
+
+            document.getElementById('wm-btn-add-group').addEventListener('click', () => {
+                const name = prompt("Nom du nouveau dossier :");
+                if (name) {
+                    const groups = getTagGroups();
+                    groups.push({ id: 'g_'+Date.now(), name, isOpen: true, rules: [] });
+                    saveTagGroups(groups);
+                    renderRulesList();
+                }
+            });
+
+            document.getElementById('wm-btn-ie-modal').addEventListener('click', () => document.getElementById('wm-ie-overlay').style.display = 'flex');
+        }
+
+        if (!document.getElementById('wm-ie-overlay')) {
+            const modal = document.createElement('div');
+            modal.id = "wm-ie-overlay";
+            modal.style.cssText = "display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100001;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
+            modal.innerHTML = `
+                <div style="background:#0f172a;border:1px solid #4f46e5;border-radius:12px;padding:20px;width:90%;max-width:500px;color:white;box-shadow:0 24px 48px rgba(0,0,0,0.7);">
+                    <h3 style="margin-top:0;font-size:16px;">⚙️ Import / Export des Règles</h3>
+                    <p style="font-size:11px;color:#94a3b8;margin-bottom:12px;">Générez votre code d'export (les IDs locaux des étiquettes sont supprimés pour le partage), ou collez un code pour importer des dossiers.</p>
+                    <textarea id="wm-ie-textarea" style="width:100%;height:150px;background:rgba(30,41,59,0.8);color:#fbbf24;border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;outline:none;resize:vertical;" placeholder="Collez un code d'import ici..."></textarea>
+                    <div style="display:flex;gap:10px;margin-top:16px;justify-content:space-between;">
+                        <button id="wm-btn-ie-close" class="wm-panel-btn ghost">Fermer</button>
+                        <div style="display:flex;gap:10px;">
+                            <button id="wm-btn-ie-export" class="wm-panel-btn ghost">📤 Exporter</button>
+                            <button id="wm-btn-ie-import" class="wm-panel-btn">📥 Importer</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            document.getElementById('wm-btn-ie-close').addEventListener('click', () => modal.style.display = 'none');
+
+            document.getElementById('wm-btn-ie-export').addEventListener('click', () => {
+                const groups = getTagGroups();
+                // On efface le tagId à l'export pour que le code soit universel
+                const exportData = groups.map(g => ({ ...g, rules: g.rules.map(r => ({ ...r, tagId: '' })) }));
+                const ta = document.getElementById('wm-ie-textarea');
+                ta.value = JSON.stringify(exportData, null, 2);
+                ta.select();
+                document.execCommand('copy');
+                logToPanel("📤 Export copié dans le presse-papier !");
+            });
+
+            document.getElementById('wm-btn-ie-import').addEventListener('click', () => {
+                try {
+                    const ta = document.getElementById('wm-ie-textarea');
+                    const imported = JSON.parse(ta.value);
+                    if (!Array.isArray(imported)) throw new Error("Format invalide");
+
+                    const groups = getTagGroups();
+                    imported.forEach(ig => {
+                        groups.push({
+                            id: 'g_' + Date.now() + Math.random(),
+                            name: ig.name + " (Importé)",
+                            isOpen: true,
+                            rules: Array.isArray(ig.rules) ? ig.rules : []
+                        });
+                    });
+                    saveTagGroups(groups);
+                    renderRulesList();
+                    modal.style.display = 'none';
+                    ta.value = '';
+                    logToPanel("📥 Groupes importés avec succès ! Pensez à réassigner vos étiquettes.");
+                } catch(e) { alert("Erreur d'importation : Le code fourni est invalide."); }
+            });
+        }
         renderTagsList();
         renderRulesList();
         bindTagButtons();
@@ -4956,22 +5064,6 @@
                 } catch(e) {
                     logToPanel(`❌ Erreur création tag: ${e.message}`);
                 }
-            });
-        }
-
-        const addRuleBtn = document.getElementById('wm-add-rule-btn');
-        if (addRuleBtn && !addRuleBtn._wmBound) {
-            addRuleBtn._wmBound = true;
-            addRuleBtn.addEventListener('click', () => {
-                const rules = getTagRules();
-                rules.push({
-                    id: 'rule_' + Date.now(),
-                    tagId: window.wmTagsCache[0]?.id || '',
-                    enabled: true,
-                    conditions: [{ field: 'avgPrice', operator: '>', value: 100 }]
-                });
-                saveTagRules(rules);
-                renderRulesList();
             });
         }
 
@@ -5151,69 +5243,88 @@
     function renderRulesList() {
         const container = document.getElementById('wm-rules-list');
         if (!container) return;
-        const rules = getTagRules();
+        const groups = getTagGroups();
 
-        if (rules.length === 0) {
-            container.innerHTML = '<div class="wm-tracked-empty">Aucune règle définie.</div>';
+        if (groups.length === 0) {
+            container.innerHTML = '<div class="wm-tracked-empty">Aucun groupe. Cliquez sur "📁 Nouveau Groupe".</div>';
             return;
         }
 
-        container.innerHTML = rules.map((rule, idx) => {
-            const tag = window.wmTagsCache.find(t => t.id === rule.tagId);
-            const conditionsHtml = rule.conditions.map((cond, cIdx) => {
-                const field = WM_RULE_FIELDS[cond.field] || {};
-                const isEnum = field.type === 'enum';
-                const isString = field.type === 'string';
-                let opOptions = ['>', '>=', '<', '<=', '=', '!='];
-                if (isString) opOptions = ['contains', 'not_contains', '=', '!='];
-                if (isEnum) opOptions = ['=', '!='];
-
-                let valueInput = '';
-                if (isEnum) {
-                    const opts = (field.values || []).map(v => `<option value="${v}" ${cond.value === v ? 'selected' : ''}>${v}</option>`).join('');
-                    valueInput = `<select data-cond-value="${idx}-${cIdx}" style="flex:1;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">${opts}</select>`;
-                } else {
-                    const inputType = field.type === 'number' ? 'number' : 'text';
-                    valueInput = `<input type="${inputType}" data-cond-value="${idx}-${cIdx}" value="${escapeHtml(String(cond.value))}" style="flex:1;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;outline:none;">`;
-                }
-
-                const opOptionsHtml = opOptions.map(op => `<option value="${op}" ${cond.operator === op ? 'selected' : ''}>${op}</option>`).join('');
-
-                return `
-                <div style="display:flex;gap:4px;align-items:center;">
-                    <select data-cond-field="${idx}-${cIdx}" style="flex:1.2;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">
-                        ${Object.entries(WM_RULE_FIELDS).map(([k, f]) => `<option value="${k}" ${cond.field === k ? 'selected' : ''}>${f.label}</option>`).join('')}
-                    </select>
-                    <select data-cond-op="${idx}-${cIdx}" style="background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">
-                        ${opOptionsHtml}
-                    </select>
-                    ${valueInput}
-                    <button data-cond-remove="${idx}-${cIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;width:24px;height:24px;cursor:pointer;font-size:12px;">✕</button>
-                </div>
-            `;
-            }).join('');
-
+        container.innerHTML = groups.map((g, gIdx) => {
+            const emoji = g.emoji || '📁';
             return `
-            <div style="background:rgba(15,23,42,0.5);border:1px solid rgba(99,102,241,0.2);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#cbd5e1;cursor:pointer;">
-                        <input type="checkbox" data-rule-toggle="${idx}" ${rule.enabled !== false ? 'checked' : ''} style="accent-color:#6366f1;cursor:pointer;">
-                        <span style="font-weight:700;">Règle #${idx + 1}</span>
-                    </label>
-                    <button data-rule-remove="${idx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:3px 8px;cursor:pointer;font-size:11px;">🗑️</button>
+            <div style="background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.2);border-radius:8px;overflow:hidden;margin-bottom:8px;">
+                <div data-group-toggle="${gIdx}" style="padding:10px 12px;background:rgba(15,23,42,0.6);display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:${g.isOpen ? '1px solid rgba(255,255,255,0.05)' : 'none'};">
+                    <span style="font-size:13px;font-weight:bold;color:#e5e7eb;pointer-events:none;">${escapeHtml(emoji)} ${escapeHtml(g.name)} (${(g.rules||[]).length})</span>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button data-group-edit="${gIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:white;padding:3px 8px;cursor:pointer;font-size:11px;" title="Modifier le dossier">⚙️</button>
+                        <button data-group-remove="${gIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:3px 8px;cursor:pointer;font-size:11px;" title="Supprimer le dossier">🗑️</button>
+                        <span style="color:#94a3b8;font-size:12px;pointer-events:none;margin-left:4px;">${g.isOpen ? '▲' : '▼'}</span>
+                    </div>
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;">
-                    <span style="font-size:10px;color:#94a3b8;font-weight:700;">TAG →</span>
-                    <select data-rule-tag="${idx}" style="flex:1;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">
-                        ${window.wmTagsCache.map(t => `<option value="${t.id}" ${rule.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
-                    </select>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:4px;">${conditionsHtml}</div>
-                <button data-cond-add="${idx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:#cbd5e1;padding:4px 8px;cursor:pointer;font-size:10px;font-weight:600;">+ Condition (ET)</button>
-            </div>
-        `;
-        }).join('');
+                <div style="display:${g.isOpen ? 'flex' : 'none'};flex-direction:column;gap:8px;padding:12px;">
+                    ${(g.rules || []).map((rule, rIdx) => {
+                        const tagBorder = rule.tagId ? 'rgba(148,163,184,0.15)' : '#ef4444';
+                        const conditionsHtml = rule.conditions.map((cond, cIdx) => {
+                            const field = WM_RULE_FIELDS[cond.field] || {};
+                            const isEnum = field.type === 'enum';
+                            const isString = field.type === 'string';
+                            let opOptions = ['>', '>=', '<', '<=', '=', '!='];
+                            if (isString) opOptions = ['contains', 'not_contains', '=', '!='];
+                            if (isEnum) opOptions = ['=', '!='];
 
+                            let valueInput = '';
+                            if (isEnum) {
+                                const opts = (field.values || []).map(v => `<option value="${v}" ${cond.value === v ? 'selected' : ''}>${v}</option>`).join('');
+                                valueInput = `<select data-cond-value="${gIdx}-${rIdx}-${cIdx}" style="flex:1;min-width:0;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">${opts}</select>`;
+                            } else {
+                                const inputType = field.type === 'number' ? 'number' : 'text';
+                                valueInput = `<input type="${inputType}" data-cond-value="${gIdx}-${rIdx}-${cIdx}" value="${escapeHtml(String(cond.value))}" style="flex:1;min-width:0;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;outline:none;">`;
+                            }
+
+                            return `
+                            <div style="display:flex;gap:4px;align-items:center;width:100%;">
+                                <select data-cond-field="${gIdx}-${rIdx}-${cIdx}" style="flex:1.2;min-width:0;text-overflow:ellipsis;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">
+                                    ${Object.entries(WM_RULE_FIELDS).map(([k, f]) => `<option value="${k}" ${cond.field === k ? 'selected' : ''}>${f.label}</option>`).join('')}
+                                </select>
+                                <select data-cond-op="${gIdx}-${rIdx}-${cIdx}" style="flex:0.6;min-width:0;background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;color:white;font-size:11px;">
+                                    ${opOptions.map(op => `<option value="${op}" ${cond.operator === op ? 'selected' : ''}>${op}</option>`).join('')}
+                                </select>
+                                ${valueInput}
+                                <button data-cond-remove="${gIdx}-${rIdx}-${cIdx}" style="flex-shrink:0;background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;width:24px;height:24px;cursor:pointer;font-size:12px;">✕</button>
+                            </div>
+                            `;
+                        }).join('');
+
+                        return `
+                        <div class="wm-rule-card-draggable" data-drag-rule="${gIdx}-${rIdx}" style="background:rgba(15,23,42,0.5);border:1px solid ${tagBorder};border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;transition:opacity 0.2s;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#cbd5e1;cursor:pointer;">
+                                    <input type="checkbox" data-rule-toggle="${gIdx}-${rIdx}" ${rule.enabled !== false ? 'checked' : ''} style="accent-color:#6366f1;cursor:pointer;">
+                                    <span style="font-weight:700;">Règle #${rIdx + 1}</span>
+                                </label>
+                                <div style="display:flex; gap:6px; align-items:center;">
+                                    <span class="wm-drag-handle" style="cursor:grab;color:#64748b;font-size:16px;padding:0 4px;user-select:none;" title="Glisser pour réorganiser">☰</span>
+                                    <button data-rule-remove="${gIdx}-${rIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:3px 8px;cursor:pointer;font-size:11px;">🗑️</button>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span style="font-size:10px;color:#94a3b8;font-weight:700;">TAG →</span>
+                                <select data-rule-tag="${gIdx}-${rIdx}" style="flex:1;background:rgba(30,41,59,0.6);border:1px solid ${tagBorder};border-radius:6px;padding:6px;color:white;font-size:11px;">
+                                    <option value="">⚠️ Sélectionner une étiquette...</option>
+                                    ${window.wmTagsCache.map(t => `<option value="${t.id}" ${rule.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:4px;">${conditionsHtml}</div>
+                            <button data-cond-add="${gIdx}-${rIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:#cbd5e1;padding:4px 8px;cursor:pointer;font-size:10px;font-weight:600;align-self:flex-start;">+ Condition (ET)</button>
+                        </div>
+                        `;
+                    }).join('')}
+                    <button data-rule-add="${gIdx}" class="wm-panel-btn ghost" style="width:100%;font-size:11px;padding:6px;">➕ Ajouter une règle ici</button>
+                </div>
+            </div>
+            `;
+        }).join('');
         bindRuleListeners();
     }
 
@@ -5222,102 +5333,274 @@
         if (!container || container._wmBound) return;
         container._wmBound = true;
 
-        // Un seul listener sur le conteneur — délégation
-        container.addEventListener('change', (e) => {
-            const target = e.target;
-            const rules = getTagRules();
+        // ==========================================
+        // GESTION DU DRAG & DROP
+        // ==========================================
+        let draggedRule = null;
+        let dragSourceEl = null;
 
-            // Toggle enabled
-            if (target.matches('[data-rule-toggle]')) {
-                const i = parseInt(target.dataset.ruleToggle, 10);
-                rules[i].enabled = target.checked;
-                saveTagRules(rules);
-                return;
-            }
-
-            // Change tag cible
-            if (target.matches('[data-rule-tag]')) {
-                const i = parseInt(target.dataset.ruleTag, 10);
-                rules[i].tagId = target.value;
-                saveTagRules(rules);
-                return;
-            }
-
-            // Change field (champ)
-            if (target.matches('[data-cond-field]')) {
-                const [i, c] = target.dataset.condField.split('-').map(Number);
-                const newField = target.value;
-                rules[i].conditions[c].field = newField;
-                // Reset operator à la valeur par défaut du nouveau type
-                const fieldType = WM_RULE_FIELDS[newField]?.type;
-                rules[i].conditions[c].operator =
-                    fieldType === 'string' ? 'contains' :
-                fieldType === 'enum' ? '=' : '>';
-                // Reset value aussi si le type change complètement
-                const oldFieldType = WM_RULE_FIELDS[rules[i].conditions[c].field]?.type;
-                if (fieldType === 'enum') {
-                    rules[i].conditions[c].value = WM_RULE_FIELDS[newField]?.values?.[0] || '';
-                } else if (fieldType === 'number') {
-                    rules[i].conditions[c].value = 0;
-                } else if (fieldType === 'string') {
-                    rules[i].conditions[c].value = '';
-                }
-                saveTagRules(rules);
-                renderRulesList(); // re-render complet
-                return;
-            }
-
-            // Change operator
-            if (target.matches('[data-cond-op]')) {
-                const [i, c] = target.dataset.condOp.split('-').map(Number);
-                const newOp = target.value;
-                console.log(`[WM-Rules] Operator change: rule ${i}, cond ${c}, "${rules[i].conditions[c].operator}" → "${newOp}"`);
-                rules[i].conditions[c].operator = newOp;
-                saveTagRules(rules);
-                return;
-            }
-
-            // Change value
-            if (target.matches('[data-cond-value]')) {
-                const [i, c] = target.dataset.condValue.split('-').map(Number);
-                const fieldType = WM_RULE_FIELDS[rules[i].conditions[c].field]?.type;
-                rules[i].conditions[c].value = fieldType === 'number' ? Number(target.value) : target.value;
-                saveTagRules(rules);
-                return;
+        // Active le drag uniquement si on clique sur l'icône ☰
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.matches('.wm-drag-handle')) {
+                const card = e.target.closest('.wm-rule-card-draggable');
+                if (card) card.setAttribute('draggable', 'true');
             }
         });
 
-        // Clics (boutons)
-        container.addEventListener('click', (e) => {
-            const target = e.target;
-            const rules = getTagRules();
-
-            if (target.matches('[data-rule-remove]')) {
-                const i = parseInt(target.dataset.ruleRemove, 10);
-                rules.splice(i, 1);
-                saveTagRules(rules);
-                renderRulesList();
-                return;
+        // Sécurité : désactive le drag quand on lâche le clic
+        document.addEventListener('mouseup', () => {
+            if (container) {
+                container.querySelectorAll('.wm-rule-card-draggable').forEach(c => c.removeAttribute('draggable'));
             }
+        });
 
-            if (target.matches('[data-cond-remove]')) {
-                const [i, c] = target.dataset.condRemove.split('-').map(Number);
-                rules[i].conditions.splice(c, 1);
-                if (rules[i].conditions.length === 0) {
-                    rules[i].conditions.push({ field: 'avgPrice', operator: '>', value: 100 });
+        container.addEventListener('dragstart', (e) => {
+            const card = e.target.closest('.wm-rule-card-draggable');
+            if (card) {
+                const [g, r] = card.dataset.dragRule.split('-').map(Number);
+                draggedRule = { g, r };
+                dragSourceEl = card;
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => card.style.opacity = '0.4', 0); // Effet fantôme transparent
+            }
+        });
+
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const card = e.target.closest('.wm-rule-card-draggable');
+            // On s'assure qu'on reste dans le même groupe (dossier)
+            if (card && draggedRule && card !== dragSourceEl) {
+                const [gTarget] = card.dataset.dragRule.split('-').map(Number);
+                if (gTarget === draggedRule.g) {
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = card.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    // Ligne d'indication visuelle (dessus ou dessous)
+                    if (e.clientY < mid) {
+                        card.style.borderTop = '2px solid #6366f1';
+                        card.style.borderBottom = '';
+                    } else {
+                        card.style.borderBottom = '2px solid #6366f1';
+                        card.style.borderTop = '';
+                    }
                 }
-                saveTagRules(rules);
-                renderRulesList();
-                return;
+            }
+        });
+
+        container.addEventListener('dragleave', (e) => {
+            const card = e.target.closest('.wm-rule-card-draggable');
+            if (card) {
+                card.style.borderTop = '';
+                card.style.borderBottom = '';
+            }
+        });
+
+        container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const card = e.target.closest('.wm-rule-card-draggable');
+            if (card && draggedRule && card !== dragSourceEl) {
+                card.style.borderTop = '';
+                card.style.borderBottom = '';
+                const [gTarget, rTarget] = card.dataset.dragRule.split('-').map(Number);
+
+                if (gTarget === draggedRule.g) {
+                    const groups = getTagGroups();
+                    const group = groups[gTarget];
+
+                    const rect = card.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    let insertIndex = rTarget;
+                    if (e.clientY >= mid) insertIndex++; // Insertion en dessous
+
+                    // Modification du tableau pour appliquer le nouvel ordre
+                    const [movedRule] = group.rules.splice(draggedRule.r, 1);
+                    if (draggedRule.r < insertIndex) insertIndex--;
+                    group.rules.splice(insertIndex, 0, movedRule);
+
+                    saveTagGroups(groups);
+                    renderRulesList();
+                }
+            }
+        });
+
+        container.addEventListener('dragend', () => {
+            if (dragSourceEl) dragSourceEl.style.opacity = '1';
+            container.querySelectorAll('.wm-rule-card-draggable').forEach(c => {
+                c.style.borderTop = '';
+                c.style.borderBottom = '';
+                c.removeAttribute('draggable');
+            });
+            draggedRule = null;
+            dragSourceEl = null;
+        });
+
+        // ==========================================
+        // GESTION DES SELECT ET INPUTS
+        // ==========================================
+        container.addEventListener('change', (e) => {
+            const target = e.target;
+            const groups = getTagGroups();
+
+            if (target.matches('[data-rule-toggle]')) {
+                const [g, r] = target.dataset.ruleToggle.split('-').map(Number);
+                groups[g].rules[r].enabled = target.checked;
+                saveTagGroups(groups); return;
+            }
+            if (target.matches('[data-rule-tag]')) {
+                const [g, r] = target.dataset.ruleTag.split('-').map(Number);
+                groups[g].rules[r].tagId = target.value;
+                saveTagGroups(groups); renderRulesList(); return;
+            }
+            if (target.matches('[data-cond-field]')) {
+                const [g, r, c] = target.dataset.condField.split('-').map(Number);
+                const newField = target.value;
+                groups[g].rules[r].conditions[c].field = newField;
+                const fieldType = WM_RULE_FIELDS[newField]?.type;
+                groups[g].rules[r].conditions[c].operator = fieldType === 'string' ? 'contains' : fieldType === 'enum' ? '=' : '>';
+                groups[g].rules[r].conditions[c].value = fieldType === 'enum' ? (WM_RULE_FIELDS[newField]?.values?.[0] || '') : (fieldType === 'number' ? 0 : '');
+                saveTagGroups(groups); renderRulesList(); return;
+            }
+            if (target.matches('[data-cond-op]')) {
+                const [g, r, c] = target.dataset.condOp.split('-').map(Number);
+                groups[g].rules[r].conditions[c].operator = target.value;
+                saveTagGroups(groups); return;
+            }
+            if (target.matches('[data-cond-value]')) {
+                const [g, r, c] = target.dataset.condValue.split('-').map(Number);
+                const fieldType = WM_RULE_FIELDS[groups[g].rules[r].conditions[c].field]?.type;
+                groups[g].rules[r].conditions[c].value = fieldType === 'number' ? Number(target.value) : target.value;
+                saveTagGroups(groups); return;
+            }
+        });
+
+        // ==========================================
+        // GESTION DES BOUTONS D'ACTION
+        // ==========================================
+        container.addEventListener('click', (e) => {
+            const groups = getTagGroups();
+            const btn = e.target.closest('button');
+
+            if (btn) {
+                if (btn.matches('[data-group-edit]')) {
+                    const gIdx = Number(btn.dataset.groupEdit);
+                    openGroupEditModal(gIdx); return;
+                }
+                if (btn.matches('[data-group-remove]')) {
+                    const gIdx = Number(btn.dataset.groupRemove);
+                    if(confirm("Supprimer ce dossier et toutes ses règles ?")) {
+                        groups.splice(gIdx, 1);
+                        saveTagGroups(groups); renderRulesList();
+                    } return;
+                }
+                if (btn.matches('[data-rule-add]')) {
+                    const gIdx = Number(btn.dataset.ruleAdd);
+                    if (!groups[gIdx].rules) groups[gIdx].rules = [];
+                    groups[gIdx].rules.push({
+                        id: 'rule_' + Date.now(),
+                        tagId: '',
+                        enabled: true,
+                        conditions: [{ field: 'avgPrice', operator: '>', value: 100 }]
+                    });
+                    saveTagGroups(groups); renderRulesList(); return;
+                }
+                if (btn.matches('[data-rule-remove]')) {
+                    const [g, r] = btn.dataset.ruleRemove.split('-').map(Number);
+                    groups[g].rules.splice(r, 1);
+                    saveTagGroups(groups); renderRulesList(); return;
+                }
+                if (btn.matches('[data-cond-remove]')) {
+                    const [g, r, c] = btn.dataset.condRemove.split('-').map(Number);
+                    groups[g].rules[r].conditions.splice(c, 1);
+                    if (groups[g].rules[r].conditions.length === 0) {
+                        groups[g].rules[r].conditions.push({ field: 'avgPrice', operator: '>', value: 100 });
+                    }
+                    saveTagGroups(groups); renderRulesList(); return;
+                }
+                if (btn.matches('[data-cond-add]')) {
+                    const [g, r] = btn.dataset.condAdd.split('-').map(Number);
+                    groups[g].rules[r].conditions.push({ field: 'avgPrice', operator: '>', value: 100 });
+                    saveTagGroups(groups); renderRulesList(); return;
+                }
             }
 
-            if (target.matches('[data-cond-add]')) {
-                const i = parseInt(target.dataset.condAdd, 10);
-                rules[i].conditions.push({ field: 'avgPrice', operator: '>', value: 100 });
-                saveTagRules(rules);
-                renderRulesList();
-                return;
+            const toggleDiv = e.target.closest('[data-group-toggle]');
+            if (toggleDiv) {
+                const gIdx = Number(toggleDiv.dataset.groupToggle);
+                groups[gIdx].isOpen = !groups[gIdx].isOpen;
+                saveTagGroups(groups); renderRulesList(); return;
             }
+        });
+    }
+
+    function openGroupEditModal(gIdx) {
+        const groups = getTagGroups();
+        const g = groups[gIdx];
+        const currentEmoji = g.emoji || '📁';
+        const currentName = g.name || '';
+
+        const existing = document.getElementById('wm-group-edit-overlay');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'wm-group-edit-overlay';
+        modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100002;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
+        modal.innerHTML = `
+            <div style="background:#0f172a;border:1px solid #4f46e5;border-radius:12px;padding:20px;width:90%;max-width:400px;color:white;box-shadow:0 24px 48px rgba(0,0,0,0.7);">
+                <h3 style="margin-top:0;font-size:16px;">⚙️ Paramètres du dossier</h3>
+
+                <div style="display:flex; gap:10px; margin-bottom:16px;">
+                    <div style="flex:0 0 60px;">
+                        <label style="font-size:11px;color:#cbd5e1;font-weight:bold;">Émoji</label>
+                        <input type="text" id="wm-edit-g-emoji" value="${escapeHtml(currentEmoji)}" maxlength="2" style="width:100%;margin-top:6px;background:rgba(30,41,59,0.8);border:1px solid rgba(148,163,184,0.3);border-radius:6px;padding:8px;color:white;text-align:center;font-size:14px;outline:none;">
+                    </div>
+                    <div style="flex:1;">
+                        <label style="font-size:11px;color:#cbd5e1;font-weight:bold;">Nom du dossier</label>
+                        <input type="text" id="wm-edit-g-name" value="${escapeHtml(currentName)}" style="width:100%;margin-top:6px;background:rgba(30,41,59,0.8);border:1px solid rgba(148,163,184,0.3);border-radius:6px;padding:8px;color:white;font-size:13px;outline:none;">
+                    </div>
+                </div>
+
+                <div style="margin-bottom:16px; padding:12px; background:rgba(30,41,59,0.5); border:1px solid rgba(148,163,184,0.2); border-radius:8px;">
+                    <span style="font-size:11px;color:#94a3b8;display:block;margin-bottom:8px;">Export spécifique (partage inter-comptes) :</span>
+                    <button id="wm-btn-export-single" class="wm-panel-btn ghost" style="width:100%;">📤 Exporter uniquement ce dossier</button>
+                </div>
+
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button id="wm-btn-edit-g-close" class="wm-panel-btn ghost">Annuler</button>
+                    <button id="wm-btn-edit-g-save" class="wm-panel-btn">Enregistrer</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        document.getElementById('wm-btn-edit-g-close').addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', (e) => { if(e.target === modal) modal.remove(); });
+
+        document.getElementById('wm-btn-export-single').addEventListener('click', () => {
+            // Clone du groupe en nettoyant les tagIds
+            const exportData = [{
+                ...g,
+                rules: (g.rules || []).map(r => ({ ...r, tagId: '' }))
+            }];
+            navigator.clipboard.writeText(JSON.stringify(exportData, null, 2)).then(() => {
+                logToPanel("📤 Dossier copié dans le presse-papier !");
+                const btn = document.getElementById('wm-btn-export-single');
+                btn.textContent = "✅ Copié !";
+                setTimeout(() => btn.textContent = "📤 Exporter uniquement ce dossier", 2000);
+            });
+        });
+
+        document.getElementById('wm-btn-edit-g-save').addEventListener('click', () => {
+            const newEmoji = document.getElementById('wm-edit-g-emoji').value.trim() || '📁';
+            const newName = document.getElementById('wm-edit-g-name').value.trim() || 'Sans nom';
+
+            const currentGroups = getTagGroups();
+            if (currentGroups[gIdx]) {
+                currentGroups[gIdx].emoji = newEmoji;
+                currentGroups[gIdx].name = newName;
+                saveTagGroups(currentGroups);
+                renderRulesList();
+            }
+            modal.remove();
         });
     }
 
@@ -5330,7 +5613,7 @@
         const st = window.wmTagScanState;
         if (st.running) return;
 
-        const rules = getTagRules().filter(r => r.enabled !== false);
+        const rules = getFlatRules();
         if (rules.length === 0) {
             logToPanel('❌ Aucune règle active.');
             return;
