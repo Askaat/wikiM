@@ -11,6 +11,13 @@
     // ============================================================
     const WM_PATCH_NOTES = [
         {
+            version: "2.1.7",
+            date: "01/10/2026 - 23:21",
+            changes: [
+                "Ajout du raccourci 'O' lors de l'ouverture d'un pack (Inverse de 'I', ça retourne en arrière et coche la case bulk)\nFix du bouton espace dans un tirage qui appuyait sur continuer qd on était en plein milieu du pack\nAjout des tags ajoutés automatiquement sur les cartes (ça met du temps à load)"
+            ]
+        },
+        {
             version: "2.1.6",
             date: "30/09/2026 - 12:30",
             changes: [
@@ -261,44 +268,56 @@
             const activeRules = getFlatRules();
 
             // 3. Croisement des données et envoi des requêtes
+            // 3. Croisement des données et envoi des requêtes
             for (const pc of pulledCards) {
                 const physical = physicalCards.find(p => p.card_id === pc.id);
                 if (!physical) continue;
 
                 const title = pc.wikipedia_title || pc.title;
 
-                // ---> FIX : Attente dynamique du chargement du prix en cache <---
                 let waitTime = 0;
-                // On patiente tant que le prix est introuvable ou en cours de chargement (max 8 secondes)
                 while ((!window.wmPrices[title] || window.wmPrices[title] === "LOADING") && waitTime < 80) {
                     await new Promise(r => setTimeout(r, 100));
                     waitTime++;
                 }
 
-                // Formatage de la carte pour qu'elle soit lisible par evaluateAllRules
+                // Formatage de la carte avec la Description !
                 const cardForEval = {
                     id: pc.id,
                     userCardId: physical.id,
                     title: title,
                     rarity: pc.rarity,
-                    category: pc.category
+                    category: pc.category,
+                    summary: pc.summary || pc.extract || pc.description || ''
                 };
 
-                // On utilise ton moteur pour obtenir la liste des IDs de tags à appliquer
                 const desiredTagIds = evaluateAllRules(cardForEval, activeRules, window.wmPrices);
 
-                // Envoi des tags un par un via l'API sécurisée du script
                 for (const tagId of desiredTagIds) {
                     await supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
                         user_card_id: physical.id,
                         tag_id: tagId
                     });
 
-                    // Récupération du nom du tag pour le log
-                    const tagName = window.wmTagsCache.find(t => t.id === tagId)?.name || 'Tag inconnu';
+                    // Récupération des infos du tag
+                    const tagObj = window.wmTagsCache.find(t => t.id === tagId);
+                    const tagName = tagObj ? tagObj.name : 'Tag';
+                    const tagColor = tagObj ? tagObj.color : '#a78bfa';
+
                     console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${title}`);
 
-                    // Délai pour éviter de submerger l'API et l'UI React
+                    // Sauvegarde dans le cache visuel global
+                    if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                    if (!window.wmVisualTagsCache[title]) window.wmVisualTagsCache[title] = [];
+
+                    // On évite les doublons visuels
+                    if (!window.wmVisualTagsCache[title].some(t => t.id === tagId)) {
+                        window.wmVisualTagsCache[title].push({ id: tagId, name: tagName, color: tagColor });
+                    }
+
+                    // On force le rafraîchissement immédiat de l'UI
+                    if (typeof renderTagsOnAllCards === 'function') renderTagsOnAllCards();
+
                     await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
@@ -2558,7 +2577,8 @@
         'rarity': { label: 'Rareté', type: 'enum', values: ['C','PC','R','SR','UR','L'],
                    getter: (card) => card.rarity },
         'title': { label: 'Titre', type: 'string', getter: (card) => card.title || '' },
-        'category': { label: 'Description', type: 'string', getter: (card) => card.category || '' }
+        'category': { label: 'Catégorie', type: 'string', getter: (card) => card.category || '' },
+        'description': { label: 'Description', type: 'string', getter: (card) => card.summary || '' }
     };
 
     const WM_RULE_OPERATORS = {
@@ -2929,6 +2949,35 @@
             attempts++;
         }
         return null;
+    }
+
+    window.wmVisualTagsCache = {}; // Cache global pour stocker les tags appliqués
+
+    function renderTagsOnAllCards() {
+        const cards = document.querySelectorAll('.w-72');
+        cards.forEach(card => {
+            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+            if (!titleEl) return;
+
+            const title = titleEl.textContent.trim();
+            const tags = window.wmVisualTagsCache[title];
+
+            if (tags && tags.length > 0) {
+                let tagContainer = card.querySelector('.wm-visual-tags');
+
+                if (!tagContainer) {
+                    tagContainer = document.createElement('div');
+                    tagContainer.className = 'wm-visual-tags';
+                    tagContainer.style.cssText = 'position: absolute; top: 36px; left: 8px; z-index: 30; display: flex; flex-direction: column; gap: 4px; pointer-events: none;';
+                    card.appendChild(tagContainer);
+                }
+
+                // Rendu des badges avec l'esthétique du jeu
+                tagContainer.innerHTML = tags.map(t =>
+                    `<div style="background-color: ${t.color}; color: #000; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: bold; box-shadow: 0 0 8px ${t.color}80; text-transform: uppercase; width: fit-content; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${t.name}</div>`
+                ).join('');
+            }
+        });
     }
 
     function renderPricesOnAllCards() {
@@ -4869,6 +4918,33 @@
             }, 200);
             return;
         }
+
+        // ==========================================
+        // 1.5 RACCOURCI "O" (Auto-Prev & Bulk Delete)
+        // ==========================================
+        if (e.key.toLowerCase() === 'o') {
+            e.preventDefault();
+
+            // 1. Retourner sur la carte précédente
+            const leftArrowSvg = document.querySelector('svg polyline[points="15 18 9 12 15 6"]');
+            if (leftArrowSvg) {
+                leftArrowSvg.closest('button').click();
+
+                // 2. Attendre la fin du slide, puis ajouter au Bulk
+                setTimeout(() => {
+                    const targetCard = document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72');
+                    if (targetCard) {
+                        const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
+                        if (bulkBtn && !bulkBtn.disabled) {
+                            console.log("[WM-Debug] 🟢 Clic sur Bulk (Rétroactif) effectué.");
+                            bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                        }
+                    }
+                }, 200);
+            }
+            return;
+        }
+
         // ==========================================
         // 2. NAVIGATION DANS LA COLLECTION (Modal)
         // ==========================================
@@ -4912,13 +4988,39 @@
         }
         else if (e.key === ' ') { // Espace pour ouvrir vite
             e.preventDefault();
+
+            // Ouvrir un paquet
             const openImg = document.querySelector('img[alt="Ouvrir un paquet"]');
             if (openImg) { openImg.closest('button').click(); return; }
 
-            const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
-            if (continueBtn) { continueBtn.click(); return; }
+            // Vérifier si on est sur la toute dernière carte (via les points de pagination)
+            let isLastCard = false;
+            const paginationDivs = document.querySelectorAll('.flex.items-center.gap-2');
+            for (const div of paginationDivs) {
+                const buttons = div.querySelectorAll('button');
+                // On s'assure qu'on regarde bien des bulles de pagination
+                if (buttons.length > 0 && Array.from(buttons).every(b => b.className.includes('rounded-full'))) {
+                    const lastBtn = buttons[buttons.length - 1];
+                    if (lastBtn.className.includes('bg-[var(--color-accent)]')) {
+                        isLastCard = true;
+                    }
+                    break; // On a trouvé la bonne div, on sort de la boucle
+                }
+            }
 
             const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
+            // Fallback : si on ne trouve pas de pagination, on se base sur l'absence de flèche droite
+            if (!isLastCard && !rightArrowSvg) {
+                 isLastCard = true;
+            }
+
+            // Si c'est la dernière carte, on cherche le bouton "Continuer"
+            if (isLastCard) {
+                const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
+                if (continueBtn) { continueBtn.click(); return; }
+            }
+
+            // Sinon, on avance d'une carte
             if (rightArrowSvg) rightArrowSvg.closest('button').click();
         }
 
@@ -5894,6 +5996,7 @@
         if (window._wmMutating) return;
 
         renderPricesOnAllCards();
+        if (typeof renderTagsOnAllCards === 'function') renderTagsOnAllCards();
         window.applyPersistentFilters();
 
         const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
