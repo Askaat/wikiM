@@ -2260,6 +2260,10 @@
     // ============================================================
     // INTERCEPTEUR FETCH CLASSIQUE
     // ============================================================
+
+    window.wmAltCardOwners = {};
+    window.wmMultiSearchCache = null;
+
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         const url = args[0] instanceof Request ? args[0].url : args[0];
@@ -2275,6 +2279,70 @@
                     const payload = JSON.parse(atob(token.split('.')[1]));
                     if (payload && payload.sub) window.wmUserId = payload.sub;
                 } catch(e) {}
+            }
+        }
+
+        // ---> FUSION DES RECHERCHES MULTI-COMPTES <---
+        if (url && url.includes('/api/my-collection') && url.includes('q=')) {
+            const urlObj = new URL(url.startsWith('http') ? url : window.location.origin + url);
+            const query = urlObj.searchParams.get('q');
+            const page = parseInt(urlObj.searchParams.get('page') || '0', 10);
+            const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+
+            // On ne déclenche la lourde logique QUE si on fait une vraie recherche avec des comptes alternatifs
+            if (query && query.trim() !== '' && altAccounts.length > 0) {
+
+                // Si la recherche a changé, on reconstruit le Méga-Tableau
+                if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
+                    logToPanel(`🔍 Recherche Multi-Comptes pour "${query}"...`);
+                    window.wmMultiSearchCache = { query: query, cards: [] };
+
+                    // Fonction interne pour pomper toutes les pages d'une route spécifique
+                    const fetchAllPages = async (baseUrl) => {
+                        let p = 0;
+                        let allCards = [];
+                        while (true) {
+                            const res = await originalFetch(`${baseUrl}&page=${p}&stats=0`, { credentials: "include" });
+                            if (!res.ok) break;
+                            const data = await res.json();
+                            const items = data.collection || [];
+                            if (items.length === 0) break;
+                            allCards = allCards.concat(items);
+                            if (items.length < 20) break; // Fin des résultats
+                            p++;
+                            await new Promise(r => setTimeout(r, 200)); // Délai anti-spam
+                        }
+                        return allCards;
+                    };
+
+                    try {
+                        // 1. Ton compte principal
+                        const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`);
+                        window.wmMultiSearchCache.cards.push(...myCards);
+
+                        // 2. Les comptes alternatifs
+                        for (const alt of altAccounts) {
+                            const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}`);
+                            altCards.forEach(c => window.wmAltCardOwners[c.id] = alt); // On marque le propriétaire
+                            window.wmMultiSearchCache.cards.push(...altCards);
+                        }
+                        logToPanel(`✅ Recherche terminée : ${window.wmMultiSearchCache.cards.length} cartes trouvées au total.`);
+                    } catch (e) {
+                        console.error("[WM-Multi] Erreur de recherche :", e);
+                    }
+                }
+
+                // ---> PAGINATION VIRTUELLE <---
+                const PAGE_SIZE = 50; // Format attendu par l'UI du jeu
+                const start = page * PAGE_SIZE;
+                const end = start + PAGE_SIZE;
+                const paginatedCards = window.wmMultiSearchCache.cards.slice(start, end);
+
+                // On renvoie une fausse réponse formatée exactement comme le serveur
+                return new Response(JSON.stringify({ collection: paginatedCards }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
             }
         }
 
@@ -3855,6 +3923,14 @@
 
             <div class="wm-tab-content hidden" data-tab="prefs">
                 <div>
+                    <div class="wm-section-title">Recherche Multi-Comptes</div>
+                    <div class="wm-input-group">
+                        <input type="text" id="wm-alt-input" class="wm-panel-input" placeholder="Pseudo exact d'un ami/alt...">
+                        <button id="wm-alt-add-btn" class="wm-panel-btn">Ajouter</button>
+                    </div>
+                    <div id="wm-alt-list" style="margin-top:8px; display:flex; gap:4px; flex-wrap:wrap;"></div>
+                </div>
+                <div>
                     <div class="wm-section-title">Notifications</div>
                     <div class="wm-pref-row"><label for="wm-pref-browser">Notification navigateur</label><input type="checkbox" id="wm-pref-browser" ${getPrefs().browser ? 'checked' : ''}></div>
                     <div class="wm-pref-row"><label for="wm-pref-toast">Toast in-page</label><input type="checkbox" id="wm-pref-toast" ${getPrefs().toast ? 'checked' : ''}></div>
@@ -4387,6 +4463,43 @@
                 select.innerHTML = '<option value="">❌ Erreur chargement amis</option>';
             }
         }
+
+        // --- LOGIQUE MULTI-COMPTES ---
+        function renderAltAccounts() {
+            const list = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+            const container = document.getElementById('wm-alt-list');
+            if (!container) return;
+            container.innerHTML = list.map((alt, i) =>
+                `<div style="background:rgba(245,158,11,0.2); border:1px solid #fbbf24; color:#fbbf24; padding:2px 8px; border-radius:12px; font-size:11px; display:flex; align-items:center; gap:6px;">
+                    👤 ${alt} <span data-alt-del="${i}" style="cursor:pointer; color:#ef4444; font-weight:bold;">✕</span>
+                </div>`
+            ).join('');
+        }
+
+        const altAddBtn = document.getElementById('wm-alt-add-btn');
+        if (altAddBtn) {
+            altAddBtn.addEventListener('click', () => {
+                const input = document.getElementById('wm-alt-input');
+                const pseudo = input.value.trim();
+                if (!pseudo) return;
+                const list = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+                if (!list.includes(pseudo)) { list.push(pseudo); localStorage.setItem('wmAltAccounts', JSON.stringify(list)); }
+                input.value = '';
+                renderAltAccounts();
+            });
+        }
+
+        document.addEventListener('click', (e) => {
+            if (e.target.dataset.altDel) {
+                const idx = Number(e.target.dataset.altDel);
+                const list = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+                list.splice(idx, 1);
+                localStorage.setItem('wmAltAccounts', JSON.stringify(list));
+                renderAltAccounts();
+            }
+        });
+
+        renderAltAccounts();
 
         function renderSmartTradesList() {
             const container = document.getElementById('wm-st-routines-list');
@@ -6009,6 +6122,30 @@
                 const cardData = getCardDataFromReact(card);
                 if (cardData && cardData.id) {
                     card.dataset.wmUuid = cardData.id;
+                    if (cardData && cardData.id) {
+                        card.dataset.wmUuid = cardData.id;
+
+                        // ---> BADGE MULTI-COMPTES <---
+                        if (window.wmAltCardOwners && window.wmAltCardOwners[cardData.id]) {
+                            const altName = window.wmAltCardOwners[cardData.id];
+                            let altBadge = card.querySelector('.wm-alt-badge');
+                            if (!altBadge) {
+                                altBadge = document.createElement('div');
+                                altBadge.className = 'wm-alt-badge';
+                                // Positionné en bas à droite
+                                altBadge.style.cssText = 'position:absolute; bottom:10px; right:10px; z-index:40; background:#fbbf24; color:#000; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.5); pointer-events:none;';
+                                altBadge.textContent = `👤 ${altName}`;
+                                card.appendChild(altBadge);
+
+                                // On grise légèrement la carte et on désactive tes boutons d'action locaux
+                                card.style.border = "2px solid #fbbf24";
+                                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'none');
+                            }
+                        } else {
+                            // Si c'est notre carte, on fetch son prix
+                            fetchPricesBackground(cardData.id, cardData.title);
+                        }
+                    }
                     fetchPricesBackground(cardData.id, cardData.title);
                 } else {
                     setTimeout(() => {
