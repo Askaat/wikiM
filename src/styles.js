@@ -1,13 +1,18 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Styles CSS
 // ============================================================
 (function(W, WikiM) {
     'use strict';
 
-    // ============================================================
-    // STYLE CSS
-    // ============================================================
-    GM_addStyle(`
+    const addStyle = typeof GM_addStyle === 'function' ? GM_addStyle : function(css) {
+        const style = document.createElement('style');
+        style.id = 'wm-custom-styles';
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+        return style;
+    };
+
+    addStyle(`
         /* ===== Boutons d'action sur cartes (uniquement /pulls) ===== */
         .wm-actions-wrapper { position: absolute; top: 10px; right: 10px; z-index: 50; display: flex; flex-direction: column; gap: 8px; }
         .wm-action-btn { color: white; border: none; border-radius: 8px; padding: 8px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); user-select: none; }
@@ -696,12 +701,4 @@
     // GM_addStyle fin
 
 
-    if (typeof injectStyles === 'function') {
-        injectStyles();
-    } else {
-        const styleEl = document.createElement('style');
-        styleEl.id = 'wm-custom-styles';
-        styleEl.textContent = WM_STYLES;
-        (document.head || document.documentElement).appendChild(styleEl);
-    }
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

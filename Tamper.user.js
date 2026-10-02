@@ -84,8 +84,12 @@
             try {
                 console.log(`[WikiM Loader] ⏳ Chargement de ${mod}...`);
                 const code = await fetchModule(mod);
-                const fn = new Function('GM_xmlhttpRequest', 'unsafeWindow', code);
-                fn(GM_xmlhttpRequest, typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
+                const fn = new Function('GM_xmlhttpRequest', 'GM_addStyle', 'unsafeWindow', code);
+                fn(
+                    typeof GM_xmlhttpRequest !== 'undefined' ? GM_xmlhttpRequest : null,
+                    typeof GM_addStyle !== 'undefined' ? GM_addStyle : null,
+                    typeof unsafeWindow !== 'undefined' ? unsafeWindow : window
+                );
                 console.log(`[WikiM Loader] ✓ ${mod}`);
             } catch (err) {
                 console.error(`[WikiM Loader] ❌ Erreur sur ${mod}:`, err);
