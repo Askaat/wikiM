@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Balance & Currency Tracking
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // TRACKING DU SOLDE WIKIBIDOUS
@@ -194,4 +192,4 @@
     if (typeof getBalanceStats !== 'undefined') { window.getBalanceStats = getBalanceStats; window.WikiM.getBalanceStats = getBalanceStats; }
     if (typeof renderBalanceSparkline !== 'undefined') { window.renderBalanceSparkline = renderBalanceSparkline; window.WikiM.renderBalanceSparkline = renderBalanceSparkline; }
     if (typeof renderBalanceUI !== 'undefined') { window.renderBalanceUI = renderBalanceUI; window.WikiM.renderBalanceUI = renderBalanceUI; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

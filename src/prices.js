@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Price Engine & Cache
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // CACHE PRIX (nouvelle structure allégée)
@@ -330,4 +328,4 @@
     if (typeof fetchPricesBackground !== 'undefined') { window.fetchPricesBackground = fetchPricesBackground; window.WikiM.fetchPricesBackground = fetchPricesBackground; }
     if (typeof fetchAllCollectionCards !== 'undefined') { window.fetchAllCollectionCards = fetchAllCollectionCards; window.WikiM.fetchAllCollectionCards = fetchAllCollectionCards; }
     if (typeof runPriceScan !== 'undefined') { window.runPriceScan = runPriceScan; window.WikiM.runPriceScan = runPriceScan; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

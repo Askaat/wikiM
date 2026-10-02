@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Trade Helper & Smart Trades Routines
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // SMART TRADES (Routines sauvegardées)
@@ -779,4 +777,4 @@
     if (typeof fetchCollectionByKeyword !== 'undefined') { window.fetchCollectionByKeyword = fetchCollectionByKeyword; window.WikiM.fetchCollectionByKeyword = fetchCollectionByKeyword; }
     if (typeof runAutoScan !== 'undefined') { window.runAutoScan = runAutoScan; window.WikiM.runAutoScan = runAutoScan; }
     if (typeof sendSmartTrade !== 'undefined') { window.sendSmartTrade = sendSmartTrade; window.WikiM.sendSmartTrade = sendSmartTrade; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

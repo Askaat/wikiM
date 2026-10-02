@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Collection, Quick Actions & Bulk Discard
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // FONCTION API MISE À JOUR (EXTRACTION DU JSON)
@@ -918,4 +916,4 @@
     if (typeof getOpenCardModal !== 'undefined') { window.getOpenCardModal = getOpenCardModal; window.WikiM.getOpenCardModal = getOpenCardModal; }
     if (typeof closeCardModal !== 'undefined') { window.closeCardModal = closeCardModal; window.WikiM.closeCardModal = closeCardModal; }
     if (typeof navigateToCardIndex !== 'undefined') { window.navigateToCardIndex = navigateToCardIndex; window.WikiM.navigateToCardIndex = navigateToCardIndex; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

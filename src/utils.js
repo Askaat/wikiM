@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Utilities, Logger & Toasts
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // WRAPPER DE RETRY GÉNÉRIQUE
@@ -243,4 +241,4 @@
     if (typeof showToast !== 'undefined') { window.showToast = showToast; window.WikiM.showToast = showToast; }
     if (typeof formatSec !== 'undefined') { window.formatSec = formatSec; window.WikiM.formatSec = formatSec; }
     if (typeof markCardAsProcessedByTitle !== 'undefined') { window.markCardAsProcessedByTitle = markCardAsProcessedByTitle; window.WikiM.markCardAsProcessedByTitle = markCardAsProcessedByTitle; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

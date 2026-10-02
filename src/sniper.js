@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Sniper & Auction Reminders
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // SNIPER — CONFIGURATION (par enchère)
@@ -770,4 +768,4 @@
     if (typeof openTrackModal !== 'undefined') { window.openTrackModal = openTrackModal; window.WikiM.openTrackModal = openTrackModal; }
     if (typeof renderTrackedAuctions !== 'undefined') { window.renderTrackedAuctions = renderTrackedAuctions; window.WikiM.renderTrackedAuctions = renderTrackedAuctions; }
     if (typeof openSniperEditModal !== 'undefined') { window.openSniperEditModal = openSniperEditModal; window.WikiM.openSniperEditModal = openSniperEditModal; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

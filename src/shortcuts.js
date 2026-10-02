@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Keyboard Shortcuts
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // RACCOURCIS CLAVIER
@@ -154,4 +152,4 @@
 
     }, true);
 
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

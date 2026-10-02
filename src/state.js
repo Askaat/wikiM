@@ -1,10 +1,8 @@
-// ============================================================
+﻿// ============================================================
 // WikiM - Module: State & Constants
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // Expose les APIs GM pour le debug depuis la console
     W.wmGmXhr = GM_xmlhttpRequest;
@@ -75,4 +73,4 @@
 
     window.WM_PATCH_NOTES = WM_PATCH_NOTES;
     window.WikiM.WM_PATCH_NOTES = WM_PATCH_NOTES;
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

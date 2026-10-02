@@ -1,10 +1,8 @@
-// ============================================================
+﻿// ============================================================
 // WikiM - Module: App Entrypoint, Observer & Lifecycle
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // OBSERVER DOM
@@ -171,4 +169,4 @@
 
     console.log('[WM-Debug] window.wmDebug disponible pour tests');
 
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Control Panel UI & Tabs
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // PANNEAU DE CONTRÔLE
@@ -510,4 +508,4 @@
     if (typeof createControlPanel !== 'undefined') { window.createControlPanel = createControlPanel; window.WikiM.createControlPanel = createControlPanel; }
     if (typeof repositionPanel !== 'undefined') { window.repositionPanel = repositionPanel; window.WikiM.repositionPanel = repositionPanel; }
     if (typeof renderPatchNotes !== 'undefined') { window.renderPatchNotes = renderPatchNotes; window.WikiM.renderPatchNotes = renderPatchNotes; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

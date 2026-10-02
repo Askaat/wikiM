@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Tags Engine, Rules & Tag Groups
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent & Anti-CORS)
@@ -1359,4 +1357,4 @@
     if (typeof escapeHtml !== 'undefined') { window.escapeHtml = escapeHtml; window.WikiM.escapeHtml = escapeHtml; }
     if (typeof runTagPreview !== 'undefined') { window.runTagPreview = runTagPreview; window.WikiM.runTagPreview = runTagPreview; }
     if (typeof runTagApply !== 'undefined') { window.runTagApply = runTagApply; window.WikiM.runTagApply = runTagApply; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

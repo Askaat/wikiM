@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Network, Interceptors & Supabase Request
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // CAPTURE TOKEN + APIKEY (dynamique)
@@ -324,4 +322,4 @@
     if (typeof extractTokenFromCookies !== 'undefined') { window.extractTokenFromCookies = extractTokenFromCookies; window.WikiM.extractTokenFromCookies = extractTokenFromCookies; }
     if (typeof supabaseRequest !== 'undefined') { window.supabaseRequest = supabaseRequest; window.WikiM.supabaseRequest = supabaseRequest; }
     if (typeof supabaseRequestWithRetry !== 'undefined') { window.supabaseRequestWithRetry = supabaseRequestWithRetry; window.WikiM.supabaseRequestWithRetry = supabaseRequestWithRetry; }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

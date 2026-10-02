@@ -1,10 +1,8 @@
 ﻿// ============================================================
 // WikiM - Module: Styles CSS
 // ============================================================
-(function() {
+(function(W, WikiM) {
     'use strict';
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    window.WikiM = window.WikiM || {};
 
     // ============================================================
     // STYLE CSS
@@ -706,4 +704,4 @@
         styleEl.textContent = WM_STYLES;
         (document.head || document.documentElement).appendChild(styleEl);
     }
-})();
+})(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});
