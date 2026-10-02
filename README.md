@@ -30,6 +30,6 @@ Le script est organisé en modules clairs situés dans le dossier `src/` :
 
 1. Installez l'extension [Tampermonkey](https://www.tampermonkey.net/) sur votre navigateur.
 2. Créez un nouveau script dans Tampermonkey.
-3. Copiez-collez l'intégralité du contenu du fichier [`wikiM.loader.user.js`](wikiM.loader.user.js).
+3. Copiez-collez l'intégralité du contenu du fichier [`Tamper.user.js`](Tamper.user.js).
 4. Enregistrez (`Ctrl+S`).
 5. Rendez-vous sur [Wiki-Masters](https://www.wiki-masters.com) : le script téléchargera automatiquement les modules à jour depuis GitHub.
