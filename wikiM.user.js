@@ -11,6 +11,13 @@
     // ============================================================
     const WM_PATCH_NOTES = [
         {
+            version: "2.2.0",
+            date: "07/10/2026 - 13:00",
+            changes: [
+                "Ajout de la possibilité de voir les cartes de notre liste Bulk + Changement de la logique pour le bulk delete -> Bien plus rapide et moins de requêtes. Ajout possibilité chercher cartes sur des alts"
+            ]
+        },
+        {
             version: "2.1.7",
             date: "01/10/2026 - 23:21",
             changes: [
@@ -959,6 +966,58 @@
         localStorage.setItem('wmMenuPosition', JSON.stringify(pos));
     }
 
+    // ==========================================
+    // MIGRATION DU BULK (Titres -> IDs Physiques)
+    // ==========================================
+    async function migrateLegacyBulkList() {
+        let bulkList = getBulkList();
+        if (bulkList.length === 0) return;
+
+        const needsMigration = bulkList.some(item => typeof item === 'string' || !item.user_card_id);
+        if (!needsMigration) return;
+
+        console.log("🔄 [WM-Bulk] Migration de l'ancien Bulk détectée en arrière-plan...");
+        const newBulkList = bulkList.filter(item => typeof item === 'object' && item.user_card_id);
+        const oldTitles = bulkList.filter(item => typeof item === 'string' || !item.user_card_id).map(i => typeof i === 'string' ? i : i.title);
+
+        let page = 0; let hasMore = true;
+        // Limite montée à 300 pages. S'arrête plus tôt si tous les oldTitles sont trouvés.
+        while (hasMore && page < 300 && oldTitles.length > 0) {
+            try {
+                // Utilisation du Retry system natif (relance 3 fois si échec)
+                const data = await withRetry(async () => {
+                    const r = await W.fetch(`/api/my-collection?page=${page}&stats=0`, { credentials: 'include' });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    return await r.json();
+                }, { retries: 3, baseDelay: 1000, label: `migration page ${page}` });
+
+                const items = data.collection || [];
+                if (items.length === 0) break;
+
+                for (const item of items) {
+                    const title = item.card?.wikipedia_title || item.wikipedia_title;
+                    const idx = oldTitles.indexOf(title);
+                    if (idx > -1) {
+                        newBulkList.push({ title: title, user_card_id: item.id });
+                        oldTitles.splice(idx, 1);
+                    }
+                }
+                if (items.length < 50) hasMore = false;
+                page++;
+                await new Promise(r => setTimeout(r, 200));
+            } catch (e) {
+                console.error(`[WM-Bulk] ❌ Arrêt de la migration à la page ${page} suite à des erreurs répétées.`);
+                break; // On arrête proprement en sauvegardant ce qui a déjà été trouvé
+            }
+        }
+
+        saveBulkList(newBulkList);
+        console.log(`✅ [WM-Bulk] Migration terminée ! ${newBulkList.length} cartes au format physique.`);
+        if (typeof updateBulkUI === 'function') updateBulkUI();
+    }
+
+    migrateLegacyBulkList();
+
     // ============================================================
     // STYLE CSS
     // ============================================================
@@ -1683,20 +1742,31 @@
 
     function updateBulkUI() {
         const container = document.getElementById('wm-bulk-list-container');
+        const titleEl = document.getElementById('wm-bulk-section-title');
         if (!container) return;
+
         const list = getBulkList();
+        const validCount = list.filter(item => typeof item === 'object' && item.user_card_id).length;
+
+        // Mise à jour du compteur dans le titre
+        if (titleEl) {
+            titleEl.innerHTML = `Panier Bulk Delete <span style="color:#a5b4fc; margin-left:auto;">${validCount} / ${list.length} prêtes</span>`;
+        }
+
         if (list.length === 0) {
             container.innerHTML = '<div class="wm-bulk-empty">Panier vide.</div>';
         } else {
             container.innerHTML = list.map(item => {
                 const title = typeof item === 'string' ? item : item.title;
-                const hasUserCardId = typeof item === 'object' && (
-                    item.userCardId || (item.id && window.wmCardIdToUserCardId.has(item.id))
-                );
-                const hasCardId = typeof item === 'object' && item.id;
-                const icon = hasUserCardId ? '✅' : (hasCardId ? '⏳' : '❓');
-                const tip = hasUserCardId ? 'Prêt (user_card_id connu)' : (hasCardId ? 'user_card_id à résoudre' : 'Aucun ID');
-                return `<div class="wm-bulk-item"><span title="${tip}">${icon} ${title}</span></div>`;
+                const isValid = typeof item === 'object' && item.user_card_id;
+
+                const icon = isValid ? '✅' : '❓';
+                const tip = isValid ? 'Prêt (ID physique validé)' : 'En attente de migration ou de résolution';
+
+                return `<div class="wm-bulk-item" title="${tip}">
+                            <span>${title}</span>
+                            <span>${icon}</span>
+                        </div>`;
             }).join('');
         }
     }
@@ -2235,6 +2305,16 @@
                     console.log(`[WM-Pack] 🎴 Pack ouvert : ${data.cards.length} cartes — lancement des routines...`);
                     logToPanel(`🎴 Pack ouvert : ${data.cards.length} cartes`);
 
+                    // NOUVEAU : Capture des IDs physiques depuis owned_copies !
+                    if (Array.isArray(data.owned_copies)) {
+                        data.owned_copies.forEach(copy => {
+                            if (copy.card_id && copy.id) {
+                                window.wmCardIdToUserCardId.set(copy.card_id, copy.id);
+                                console.log(`[WM-Bulk] 🔗 Lien mémorisé : Global ${copy.card_id} -> Physique ${copy.id}`);
+                            }
+                        });
+                    }
+
                     // 1. Lancement du scan des prix
                     data.cards.forEach((card, i) => {
                         const uuid = card.id;
@@ -2258,116 +2338,221 @@
     };
 
     // ============================================================
-    // INTERCEPTEUR FETCH CLASSIQUE
+    // INTERCEPTEUR FETCH CLASSIQUE (Multi-comptes, Abort & API)
     // ============================================================
-
     window.wmAltCardOwners = {};
     window.wmMultiSearchCache = null;
+    window.wmMultiSearchPromise = null;
+    window.wmMultiSearchAbortController = null; // Le contrôleur d'annulation
 
-    const originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-        const url = args[0] instanceof Request ? args[0].url : args[0];
-        const options = args[1] || {};
-
-        if (options.headers) {
-            const headers = new Headers(options.headers);
-            if (headers.has('apikey')) window.wmAuth.apikey = headers.get('apikey');
-            if (headers.has('authorization')) {
-                const token = headers.get('authorization');
-                window.wmAuth.token = token;
-                try {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    if (payload && payload.sub) window.wmUserId = payload.sub;
-                } catch(e) {}
-            }
-        }
-
-        // ---> FUSION DES RECHERCHES MULTI-COMPTES <---
-        if (url && url.includes('/api/my-collection') && url.includes('q=')) {
-            const urlObj = new URL(url.startsWith('http') ? url : window.location.origin + url);
-            const query = urlObj.searchParams.get('q');
-            const page = parseInt(urlObj.searchParams.get('page') || '0', 10);
-            const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
-
-            // On ne déclenche la lourde logique QUE si on fait une vraie recherche avec des comptes alternatifs
-            if (query && query.trim() !== '' && altAccounts.length > 0) {
-
-                // Si la recherche a changé, on reconstruit le Méga-Tableau
-                if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
-                    logToPanel(`🔍 Recherche Multi-Comptes pour "${query}"...`);
-                    window.wmMultiSearchCache = { query: query, cards: [] };
-
-                    // Fonction interne pour pomper toutes les pages d'une route spécifique
-                    const fetchAllPages = async (baseUrl) => {
-                        let p = 0;
-                        let allCards = [];
-                        while (true) {
-                            const res = await originalFetch(`${baseUrl}&page=${p}&stats=0`, { credentials: "include" });
-                            if (!res.ok) break;
-                            const data = await res.json();
-                            const items = data.collection || [];
-                            if (items.length === 0) break;
-                            allCards = allCards.concat(items);
-                            if (items.length < 20) break; // Fin des résultats
-                            p++;
-                            await new Promise(r => setTimeout(r, 200)); // Délai anti-spam
-                        }
-                        return allCards;
-                    };
-
-                    try {
-                        // 1. Ton compte principal
-                        const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`);
-                        window.wmMultiSearchCache.cards.push(...myCards);
-
-                        // 2. Les comptes alternatifs
-                        for (const alt of altAccounts) {
-                            const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}`);
-                            altCards.forEach(c => window.wmAltCardOwners[c.id] = alt); // On marque le propriétaire
-                            window.wmMultiSearchCache.cards.push(...altCards);
-                        }
-                        logToPanel(`✅ Recherche terminée : ${window.wmMultiSearchCache.cards.length} cartes trouvées au total.`);
-                    } catch (e) {
-                        console.error("[WM-Multi] Erreur de recherche :", e);
-                    }
-                }
-
-                // ---> PAGINATION VIRTUELLE <---
-                const PAGE_SIZE = 50; // Format attendu par l'UI du jeu
-                const start = page * PAGE_SIZE;
-                const end = start + PAGE_SIZE;
-                const paginatedCards = window.wmMultiSearchCache.cards.slice(start, end);
-
-                // On renvoie une fausse réponse formatée exactement comme le serveur
-                return new Response(JSON.stringify({ collection: paginatedCards }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' }
-                });
-            }
-        }
-
-        const response = await originalFetch.apply(this, args);
+    const originalPageFetch = W.fetch;
+    W.fetch = async function(...args) {
+        let requestUrl = '';
+        try {
+            if (args[0] instanceof Request || (W.Request && args[0] instanceof W.Request)) requestUrl = args[0].url;
+            else if (args[0] instanceof URL || (W.URL && args[0] instanceof W.URL)) requestUrl = args[0].href;
+            else requestUrl = String(args[0]);
+        } catch(e) { requestUrl = 'unknown'; }
 
         try {
-            // Interception des prix du marché
-            if (url && url.includes('sales?scope=summary')) {
-                const clone = response.clone();
-                clone.json().then(data => {
-                    if (data && data.wikipedia_title) {
-                        window.wmPrices[data.wikipedia_title] = data.summary || {};
+            const urlObj = new URL(requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, ''));
+            const pathname = urlObj.pathname;
+            const query = urlObj.searchParams.get('q');
+            const page = parseInt(urlObj.searchParams.get('page') || '0', 10);
+
+            const isMyCollection = pathname === '/api/my-collection';
+            const isMyStats = pathname === '/api/my-collection/stats';
+
+            const multiSearchEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+
+            // ---> ARCHITECTURE BULK (Supabase in. operator) <---
+            if (query === '[WM-BULK]' && (isMyCollection || isMyStats)) {
+                const bulkList = JSON.parse(localStorage.getItem('wmBulkList') || '[]');
+                const validBulk = bulkList.filter(item => typeof item === 'object' && item.user_card_id);
+                const ResponseConstructor = W.Response || Response;
+
+                if (isMyStats) {
+                    return new ResponseConstructor(JSON.stringify({
+                        total: validBulk.length, rarityCounts: {}, tagOptions: []
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+
+                if (isMyCollection) {
+                    const start = page * 50;
+                    const chunk = validBulk.slice(start, start + 50);
+                    const ids = chunk.map(c => c.user_card_id);
+
+                    if (ids.length === 0) {
+                        return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
                     }
-                }).catch(() => {});
+
+                    try {
+                        // FIX : Utilisation de W.wmAuth (unsafeWindow) qui contient le VRAI token extrait des cookies
+                        const authObj = W.wmAuth || window.wmAuth;
+                        if (!authObj || !authObj.token) throw new Error("Token d'authentification introuvable");
+
+                        const token = authObj.token.startsWith('Bearer') ? authObj.token : `Bearer ${authObj.token}`;
+
+                        const res = await originalPageFetch(`https://${SUPABASE_REF}.supabase.co/rest/v1/user_cards?select=id,is_shiny,obtained_at,card:card_id(*)&id=in.(${ids.join(',')})`, {
+                            method: 'GET',
+                            headers: {
+                                'apikey': authObj.apikey,
+                                'authorization': token,
+                                'accept': 'application/json',
+                                'content-profile': 'public'
+                            },
+                            credentials: 'omit'
+                        });
+
+                        if (res.ok) {
+                            const sbData = await res.json();
+                            // Formatage pour que React croie que c'est l'API native
+                            const formattedCollection = sbData.map(item => ({
+                                id: item.id,
+                                card_id: item.card?.id,
+                                user_id: W.wmUserId,
+                                is_shiny: item.is_shiny,
+                                obtained_at: item.obtained_at,
+                                card: item.card
+                            }));
+
+                            return new ResponseConstructor(JSON.stringify({
+                                collection: formattedCollection, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
+                            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                        } else {
+                            console.error(`[WM-Bulk] ❌ Erreur API Supabase: HTTP ${res.status}`);
+                        }
+                    } catch (e) {
+                        console.error("[WM-Bulk] ❌ Erreur fetch Supabase:", e);
+                    }
+
+                    // Fallback en cas d'erreur
+                    return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
             }
 
-            // Interception de tes tags existants
-            if (url && url.includes('/rest/v1/tags?select=')) {
+            // ---> ARCHITECTURE DOUBLE INTERCEPTION <---
+            if (multiSearchEnabled && (isMyCollection || isMyStats) && query && query.trim() !== '') {
+                const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+
+                if (altAccounts.length > 0) {
+
+                    if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
+
+                        // 🛑 Si une ancienne recherche est en cours, on la tue immédiatement !
+                        if (window.wmMultiSearchAbortController) {
+                            window.wmMultiSearchAbortController.abort();
+                        }
+
+                        window.wmMultiSearchAbortController = new AbortController();
+                        const signal = window.wmMultiSearchAbortController.signal;
+
+                        window.wmMultiSearchPromise = (async () => {
+                            window.wmMultiSearchCache = { query: query, cards: [] };
+
+                            const fetchAllPages = async (baseUrl, isAlt) => {
+                                let p = 0; let allCards = [];
+                                while (p < 10) {
+                                    if (signal.aborted) throw new Error('aborted');
+
+                                    const sep = baseUrl.includes('?') ? '&' : '?';
+                                    const statsParam = isAlt ? 'stats=1' : 'stats=0';
+                                    const fetchUrl = `${baseUrl}${sep}page=${p}&${statsParam}`;
+
+                                    try {
+                                        const res = await originalPageFetch(fetchUrl, { credentials: "include", signal });
+                                        if (!res.ok) {
+                                            if (isAlt) window.wmShowMultiSearchError?.(`Erreur ${res.status} sur ${baseUrl.split('/')[3]}`);
+                                            break;
+                                        }
+
+                                        const data = await res.json();
+                                        const items = data.collection || [];
+                                        if (items.length === 0) break;
+
+                                        allCards = allCards.concat(items);
+                                        if (items.length < 50) break;
+                                        p++;
+                                        await new Promise(r => setTimeout(r, 150));
+                                    } catch (err) {
+                                        if (err.name === 'AbortError') throw new Error('aborted');
+                                        if (isAlt) window.wmShowMultiSearchError?.(`Impossible d'atteindre ${baseUrl.split('/')[3]}`);
+                                        break;
+                                    }
+                                }
+                                return allCards;
+                            };
+
+                            try {
+                                const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`, false);
+                                window.wmMultiSearchCache.cards.push(...myCards);
+
+                                for (const alt of altAccounts) {
+                                    if (signal.aborted) throw new Error('aborted');
+                                    const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}&pending=1`, true);
+
+                                    // Sauvegarde blindée (ID global, ID utilisateur et Titre)
+                                    // Sauvegarde blindée (ID global, ID utilisateur et Titre)
+                                        altCards.forEach(c => {
+                                            if (c.id) window.wmAltCardOwners[c.id] = alt;
+                                            if (c.card_id) window.wmAltCardOwners[c.card_id] = alt;
+                                            if (c.card && c.card.id) window.wmAltCardOwners[c.card.id] = alt;
+                                            const title = c.card?.wikipedia_title || c.wikipedia_title;
+                                            if (title) {
+                                                const normTitle = title.replace(/\s+/g, ' ').trim();
+                                                window.wmAltCardOwners[normTitle] = alt;
+                                                console.log(`[WM-Multi] 📝 Mémorisé: "${normTitle}" => ${alt} (ID: ${c.id})`);
+                                            }
+                                        });
+
+                                    window.wmMultiSearchCache.cards.push(...altCards);
+                                }
+                            } catch (e) {
+                                if (e.message !== 'aborted') console.error("[WM-Fetch] ❌ Erreur :", e);
+                            }
+                        })();
+                    }
+
+                    // On attend la fin de la promesse (ou son annulation)
+                    if (window.wmMultiSearchPromise) await window.wmMultiSearchPromise;
+
+                    const ResponseConstructor = W.Response || Response;
+
+                    // Si on a tapé une nouvelle lettre entre temps, on renvoie une réponse vide pour ne pas crasher React
+                    if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
+                        if (isMyStats) return new ResponseConstructor(JSON.stringify({ total: 0, rarityCounts: {}, tagOptions: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                        if (isMyCollection) return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    }
+
+                    // Réponses finales falsifiées
+                    if (isMyStats) {
+                        return new ResponseConstructor(JSON.stringify({
+                            total: window.wmMultiSearchCache.cards.length,
+                            rarityCounts: {}, tagOptions: []
+                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    }
+
+                    if (isMyCollection) {
+                        const start = page * 50;
+                        const paginated = window.wmMultiSearchCache.cards.slice(start, start + 50);
+                        return new ResponseConstructor(JSON.stringify({
+                            collection: paginated, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
+                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    }
+                }
+            }
+        } catch (e) { console.error("[WM-Fetch] ❌ Erreur :", e); }
+
+        // REQUÊTES STANDARDS (Prix, Tags, etc.)
+        const response = await originalPageFetch.apply(this, args);
+        try {
+            const urlObj2 = new URL(requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, ''));
+            const pathname2 = urlObj2.pathname;
+
+            if (pathname2.includes('sales') && requestUrl.includes('scope=summary')) {
                 const clone = response.clone();
                 clone.json().then(data => {
-                    if (Array.isArray(data)) {
-                        data.forEach(tag => {
-                            window.wmTags[tag.name] = { id: tag.id, color: tag.color || '#a78bfa' };
-                        });
-                    }
+                    if (data && data.wikipedia_title) window.wmPrices[data.wikipedia_title] = data.summary || {};
                 }).catch(() => {});
             }
         } catch (e) {}
@@ -3008,6 +3193,7 @@
                     if (c && typeof c === 'object' && c.id) {
                         return {
                             id: c.id,
+                            card_id: c.card_id || c.card?.id, // On tente d'attraper spécifiquement l'ID global
                             title: c.wikipedia_title || c.card?.wikipedia_title || c.title
                         };
                     }
@@ -3017,6 +3203,44 @@
             attempts++;
         }
         return null;
+    }
+
+    function toggleBulkForCard(card) {
+        const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+        if (!titleEl) return;
+        const title = titleEl.textContent.trim();
+        let list = getBulkList();
+
+        const existingIndex = list.findIndex(item => (typeof item === 'string' ? item : item.title) === title);
+
+        if (existingIndex > -1) {
+            list.splice(existingIndex, 1);
+            saveBulkList(list);
+            logToPanel(`[Bulk] Retiré : ${title}`);
+        } else {
+            const cardData = getCardDataFromReact(card);
+            let userCardId = null;
+
+            if (cardData) {
+                // On croise toutes nos données pour extraire l'ID physique avec certitude
+                if (cardData.card_id && window.wmCardIdToUserCardId.has(cardData.card_id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                } else if (window.wmCardIdToUserCardId.has(cardData.id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                } else {
+                    userCardId = cardData.id; // Fallback
+                }
+            } else {
+                userCardId = card.dataset.wmUuid || null;
+            }
+
+            list.push({ title: title, user_card_id: userCardId });
+            saveBulkList(list);
+            logToPanel(`[Bulk] ✅ Ajouté : ${title}`);
+        }
+
+        if (typeof updateBulkUI === 'function') updateBulkUI();
+        if (typeof updateAllBulkButtonsUI === 'function') updateAllBulkButtonsUI();
     }
 
     window.wmVisualTagsCache = {}; // Cache global pour stocker les tags appliqués
@@ -3080,6 +3304,56 @@
                     panel.innerHTML = rowsHtml;
                     card.appendChild(panel);
                 }
+            }
+        });
+    }
+
+    function renderAltBadgesOnAllCards() {
+        // Nouveau sélecteur ultra-large : attrape .w-72 OU les conteneurs responsives de la collection
+        const cards = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative');
+
+        cards.forEach(card => {
+            // Sécurité : on vérifie que c'est bien une carte en cherchant un titre
+            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+            if (!titleEl) return;
+
+            let altName = null;
+
+            const cardData = getCardDataFromReact(card);
+            if (cardData && cardData.id && window.wmAltCardOwners[cardData.id]) {
+                altName = window.wmAltCardOwners[cardData.id];
+            }
+
+            if (!altName && card.dataset.wmUuid && window.wmAltCardOwners[card.dataset.wmUuid]) {
+                altName = window.wmAltCardOwners[card.dataset.wmUuid];
+            }
+
+            if (!altName) {
+                const title = titleEl.textContent.replace(/\s+/g, ' ').trim();
+                altName = window.wmAltCardOwners[title];
+            }
+
+            let altBadge = card.querySelector('.wm-alt-badge');
+
+            if (altName) {
+                if (!altBadge) {
+                    card.style.setProperty('position', 'relative', 'important');
+                    altBadge = document.createElement('div');
+                    altBadge.className = 'wm-alt-badge';
+                    altBadge.style.cssText = 'position:absolute; bottom:12px; right:12px; z-index:9999; background:#fbbf24; color:#000; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.8); pointer-events:none;';
+                    altBadge.textContent = `👤 ${altName}`;
+                    card.appendChild(altBadge);
+                }
+                card.style.setProperty('border', '3px solid #fbbf24', 'important');
+                card.style.setProperty('box-shadow', '0 0 15px rgba(251, 191, 36, 0.4)', 'important');
+                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'none');
+            } else {
+                if (altBadge) altBadge.remove();
+                if (card.style.borderColor === 'rgb(251, 191, 36)' || card.style.borderColor === '#fbbf24' || card.style.getPropertyValue('border').includes('251')) {
+                    card.style.border = '';
+                    card.style.boxShadow = '';
+                }
+                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'flex');
             }
         });
     }
@@ -3330,45 +3604,6 @@
         }, 50);
     }
 
-    function toggleBulkForCard(card) {
-        const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
-        if (!titleEl) return;
-        const title = titleEl.textContent.trim();
-        let list = getBulkList();
-
-        const existingIndex = list.findIndex(item => (typeof item === 'string' ? item : item.title) === title);
-
-        if (existingIndex > -1) {
-            list.splice(existingIndex, 1);
-            saveBulkList(list);
-            logToPanel(`[Bulk] Retiré : ${title}`);
-        } else {
-            // Extraction du card_id via React ou data-attribute
-            const cardData = getCardDataFromReact(card);
-            const cardId = cardData ? cardData.id : (card.dataset.wmUuid || null);
-
-            // 🎯 Résolution immédiate du user_card_id via l'index local
-            let userCardId = null;
-            if (cardId && window.wmCardIdToUserCardId.has(cardId)) {
-                userCardId = window.wmCardIdToUserCardId.get(cardId);
-            }
-
-            list.push({ title: title, id: cardId, userCardId: userCardId });
-            saveBulkList(list);
-
-            if (userCardId) {
-                logToPanel(`[Bulk] ✅ Ajouté : ${title} (user_card_id résolu)`);
-            } else if (cardId) {
-                logToPanel(`[Bulk] ⏳ Ajouté : ${title} (user_card_id sera cherché au moment du delete)`);
-            } else {
-                logToPanel(`[Bulk] ⚠️ Ajouté : ${title} (aucun ID trouvé)`);
-            }
-        }
-
-        updateBulkUI();
-        updateAllBulkButtonsUI();
-    }
-
     function stopPropagationOnElement(element) {
         ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(evt => element.addEventListener(evt, (e) => e.stopPropagation()));
     }
@@ -3611,6 +3846,26 @@
     // ============================================================
     // TRADE HELPER
     // ============================================================
+    // ============================================================
+    // TRADE HELPER (Création & Réception)
+    // ============================================================
+
+    // --- FONCTIONS COMMUNES ---
+    function getCardValue(title, rarity = null) {
+        const data = window.wmPrices[title];
+        if (!data || typeof data !== 'object') return null;
+        if (rarity) return typeof data[rarity] === 'number' ? data[rarity] : null;
+        const vals = Object.values(data).filter(v => typeof v === 'number');
+        return vals.length > 0 ? Math.max(...vals) : null;
+    }
+
+    async function ensurePriceForTrade(cardId, title) {
+        if (!cardId || !title) return;
+        if (window.wmPrices[title] && window.wmPrices[title] !== 'LOADING') return;
+        await fetchPricesBackground(cardId, title);
+    }
+
+    // --- LOGIQUE : CRÉATION DE TRADE ---
     function getOpenTradeModal() {
         const candidates = document.querySelectorAll('div.fixed.inset-0.z-50');
         for (const el of candidates) {
@@ -3638,21 +3893,6 @@
             selected.push({ el: c, title, cardId: cardData?.id || null });
         });
         return selected;
-    }
-
-    function getCardValue(title, rarity = null) {
-        const data = window.wmPrices[title];
-        if (!data || typeof data !== 'object') return null;
-        if (rarity) return typeof data[rarity] === 'number' ? data[rarity] : null;
-        // Sinon : max de toutes les raretés
-        const vals = Object.values(data).filter(v => typeof v === 'number');
-        return vals.length > 0 ? Math.max(...vals) : null;
-    }
-
-    async function ensurePriceForTrade(cardId, title) {
-        if (!cardId || !title) return;
-        if (window.wmPrices[title] && window.wmPrices[title] !== 'LOADING') return;
-        await fetchPricesBackground(cardId, title);
     }
 
     async function computeTradeHelper() {
@@ -3703,9 +3943,123 @@
         `;
     }
 
+    // --- LOGIQUE : RÉCEPTION DE TRADE (Détail de l'échange) ---
+    function getOpenIncomingTradeModal() {
+        // Cherche la fenêtre qui s'ouvre quand on clique sur un échange reçu
+        const candidates = document.querySelectorAll('div.animate-fade-in-up');
+        for (const el of candidates) {
+            const h2 = el.querySelector('h2');
+            if (h2 && /Détail de l'échange/i.test(h2.textContent)) return el;
+        }
+        return null;
+    }
+
+    async function computeIncomingTradeHelper() {
+        const modal = getOpenIncomingTradeModal();
+        if (!modal) return;
+
+        // Les deux colonnes sont identifiables par ces classes
+        const flexCols = modal.querySelectorAll('div.flex-1.space-y-3');
+        if (flexCols.length < 2) return;
+
+        const themCol = flexCols[0]; // Ce qu'il offre
+        const meCol = flexCols[1];   // Ce que je donne
+
+        const parseCards = (col) => {
+            const cards = [];
+            // On attrape chaque div de carte
+            const els = col.querySelectorAll('div.relative.rounded-2xl.cursor-pointer, div.relative.rounded-2xl.overflow-hidden');
+            els.forEach(cardDiv => {
+                const titleEl = cardDiv.querySelector('h3');
+                if (!titleEl) return;
+                const title = titleEl.textContent.trim();
+
+                // Extraction de la rareté depuis le DOM
+                const rarityEl = Array.from(cardDiv.querySelectorAll('div.absolute')).find(el => /^(C|PC|R|SR|UR|L)$/.test(el.textContent.trim()));
+                const rarity = rarityEl ? rarityEl.textContent.trim() : null;
+
+                // Tente d'extraire l'ID React pour forcer la màj du prix si besoin
+                const cardData = getCardDataFromReact(cardDiv);
+                const cardId = cardData ? cardData.id : null;
+
+                cards.push({ title, rarity, cardId });
+            });
+            return cards;
+        };
+
+        const themCards = parseCards(themCol);
+        const meCards = parseCards(meCol);
+
+        // Déclenche la récupération des prix manquants
+        await Promise.all([...themCards, ...meCards].map(c => ensurePriceForTrade(c.cardId, c.title)));
+
+        const calcTotal = (cards) => {
+            let total = 0; let known = 0;
+            cards.forEach(c => {
+                const v = getCardValue(c.title, c.rarity);
+                if (v !== null) { total += v; known++; }
+            });
+            return { total, known, count: cards.length };
+        };
+
+        const themStats = calcTotal(themCards);
+        const meStats = calcTotal(meCards);
+
+        updateIncomingTradeUI(modal, themStats, meStats);
+    }
+
+    function updateIncomingTradeUI(modal, themStats, meStats) {
+        let helper = modal.querySelector('#wm-incoming-trade-helper');
+        if (!helper) {
+            helper = document.createElement('div');
+            helper.id = 'wm-incoming-trade-helper';
+            helper.style.cssText = 'background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%); border-bottom: 1px solid rgba(99, 102, 241, 0.25); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;';
+
+            // On l'insère juste en dessous de l'en-tête de la modale
+            const header = modal.firstElementChild;
+            header.after(helper);
+        }
+
+        const formatVal = (stats) => {
+            if (stats.count === 0) return '0 WB';
+            if (stats.known === 0) return '⏳';
+            return `${stats.known < stats.count ? '≈ ' : ''}${stats.total} WB`;
+        };
+
+        const valThem = formatVal(themStats);
+        const valMe = formatVal(meStats);
+
+        const diff = themStats.total - meStats.total;
+        const diffColor = diff > 0 ? '#10b981' : (diff < 0 ? '#ef4444' : '#94a3b8');
+        let diffText = diff > 0 ? `+${diff} WB` : `${diff} WB`;
+        if (themStats.known < themStats.count || meStats.known < meStats.count) {
+            diffText = `≈ ${diffText}`;
+        }
+
+        helper.innerHTML = `
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+                <span style="font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;">Valeur Reçue</span>
+                <span style="font-size: 16px; font-weight: 800; color: #10b981; font-family: monospace;">${valThem}</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px; align-items: center;">
+                <span style="font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;">Bénéfice Net</span>
+                <span style="font-size: 16px; font-weight: 800; color: ${diffColor}; font-family: monospace;">${diffText}</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px; text-align: right;">
+                <span style="font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;">Valeur Donnée</span>
+                <span style="font-size: 16px; font-weight: 800; color: #ef4444; font-family: monospace;">${valMe}</span>
+            </div>
+        `;
+    }
+
+    // --- SUPER-OBSERVER (Surveille les deux fenêtres simultanément) ---
     let tradeObserver = null;
     let tradeModalRef = null;
+    let incomingTradeObserver = null;
+    let incomingTradeModalRef = null;
+
     setInterval(() => {
+        // 1. Fenêtre de Création
         const modal = getOpenTradeModal();
         if (modal) {
             if (tradeModalRef !== modal) {
@@ -3724,6 +4078,27 @@
             const h = document.getElementById('wm-trade-helper');
             if (h) h.remove();
         }
+
+        // 2. Fenêtre de Réception (Nouvelle)
+        const incomingModal = getOpenIncomingTradeModal();
+        if (incomingModal) {
+            if (incomingTradeModalRef !== incomingModal) {
+                if (incomingTradeObserver) { incomingTradeObserver.disconnect(); incomingTradeObserver = null; }
+                incomingTradeModalRef = incomingModal;
+                incomingTradeObserver = new MutationObserver(() => {
+                    clearTimeout(window._wmIncTradeDebounce);
+                    window._wmIncTradeDebounce = setTimeout(computeIncomingTradeHelper, 200);
+                });
+                incomingTradeObserver.observe(incomingModal, { childList: true, subtree: true });
+            }
+            computeIncomingTradeHelper();
+        } else {
+            if (incomingTradeObserver) { incomingTradeObserver.disconnect(); incomingTradeObserver = null; }
+            incomingTradeModalRef = null;
+            const h2 = document.getElementById('wm-incoming-trade-helper');
+            if (h2) h2.remove();
+        }
+
     }, 1000);
 
     // ============================================================
@@ -3818,8 +4193,11 @@
 
             <div class="wm-tab-content hidden" data-tab="bulk">
                 <div>
-                    <div class="wm-section-title">Panier Bulk Delete</div>
+                    <div class="wm-section-title" id="wm-bulk-section-title">Panier Bulk Delete</div>
                     <div id="wm-bulk-list-container"></div>
+                    <div style="display:flex; gap:6px; margin-bottom: 6px;">
+                        <button id="wm-bulk-page-btn" class="wm-panel-btn danger" style="flex:1;" disabled>🔥 Défausser la page (0)</button>
+                    </div>
                     <div style="display:flex; gap:6px;">
                         <button id="wm-bulk-exec-btn" class="wm-panel-btn danger" style="flex:1;">Tout Défausser</button>
                         <button id="wm-bulk-clear-btn" class="wm-panel-btn ghost">Vider</button>
@@ -3924,11 +4302,16 @@
             <div class="wm-tab-content hidden" data-tab="prefs">
                 <div>
                     <div class="wm-section-title">Recherche Multi-Comptes</div>
+                    <label style="display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:11px; color:#cbd5e1; cursor:pointer;">
+                        <input type="checkbox" id="wm-toggle-multi-search" style="accent-color:#6366f1; cursor:pointer;">
+                        <span>Activer la recherche combinée (Amis/Alts)</span>
+                    </label>
                     <div class="wm-input-group">
                         <input type="text" id="wm-alt-input" class="wm-panel-input" placeholder="Pseudo exact d'un ami/alt...">
                         <button id="wm-alt-add-btn" class="wm-panel-btn">Ajouter</button>
                     </div>
                     <div id="wm-alt-list" style="margin-top:8px; display:flex; gap:4px; flex-wrap:wrap;"></div>
+                    <div id="wm-alt-errors" style="margin-top:8px; display:flex; flex-direction:column; gap:4px; font-size:10px; color:#ef4444;"></div>
                 </div>
                 <div>
                     <div class="wm-section-title">Notifications</div>
@@ -4088,80 +4471,54 @@
 
         document.getElementById('wm-bulk-exec-btn').addEventListener('click', async () => {
             const list = getBulkList();
-            if (list.length === 0) return;
+            const validItems = list.filter(item => typeof item === 'object' && item.user_card_id);
+            const invalidItems = list.filter(item => typeof item === 'string' || !item.user_card_id);
 
-            logToPanel(`🚀 Lancement Bulk Delete (${list.length} cartes)...`);
-
-            const readyToDelete = [];
-            const remainingList = [];
-            let resolvedFromIndex = 0;
-            let resolvedFromApi = 0;
-
-            // ---- Phase 1 : résolution des user_card_id ----
-            for (const item of list) {
-                const title = typeof item === 'string' ? item : item.title;
-                const cardId = typeof item === 'object' ? item.id : null;
-                let userCardId = typeof item === 'object' ? item.userCardId : null;
-
-                // Si déjà résolu (ajouté avec succès via toggleBulkForCard)
-                if (userCardId) {
-                    readyToDelete.push({ title, userCardId, cardId });
-                    resolvedFromIndex++;
-                    continue;
-                }
-
-                // Sinon, tente la résolution
-                userCardId = await wmResolveUserCardId(cardId, title);
-
-                if (userCardId) {
-                    readyToDelete.push({ title, userCardId, cardId });
-                    resolvedFromApi++;
-                } else {
-                    logToPanel(`⚠️ "${title}" — impossible de résoudre user_card_id`);
-                    remainingList.push({ title, id: cardId, userCardId: null });
-                }
+            if (validItems.length === 0) {
+                logToPanel(`❌ Aucune carte prête.`);
+                return;
             }
 
-            logToPanel(`🔎 Résolution : ${resolvedFromIndex} depuis l'index, ${resolvedFromApi} via API, ${remainingList.length} échecs`);
+            logToPanel(`🚀 Lancement Bulk Delete (${validItems.length} cartes)...`);
+            const userCardIds = validItems.map(item => item.user_card_id);
+            const btn = document.getElementById('wm-bulk-exec-btn');
+            btn.disabled = true;
 
-            // ---- Phase 2 : appel bulk delete ----
-            if (readyToDelete.length > 0) {
-                logToPanel(`[API] ⚡ Exécution globale (${readyToDelete.length} cartes)...`);
-                const userCardIds = readyToDelete.map(item => item.userCardId);
-                const result = await executeBulkDiscard(userCardIds);
+            const result = await executeBulkDiscard(userCardIds);
 
-                if (result && result.success) {
-                    logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
+            if (result && result.success !== false) {
+                const failedIds = new Set((result.failed || []).map(f => f.card_id || f.id));
+
+                if (failedIds.size > 0) {
+                    logToPanel(`⚠️ Partiel : ${result.count} défaussées, ${failedIds.size} erreurs.`);
+                    showWMToast(`${result.count} défaussées, ${failedIds.size} erreurs !`, false);
+                } else {
+                    logToPanel(`✅ Succès : ${result.count} défaussées`);
                     showWMToast(`Suppression réussie ! +${result.count} WB`, true);
-
-                    for (const item of readyToDelete) {
-                        markCardAsProcessedByTitle(item.title);
-                        if (typeof userCardIdCache !== 'undefined') userCardIdCache.delete(item.title);
-                        if (window.wmInventoryMap) delete window.wmInventoryMap[item.title];
-                    }
-
-                    // Met à jour le solde si dispo
-                    if (typeof result.balance === 'number') {
-                        recordBalance(result.balance, 'bulk_discard');
-                    }
-                } else {
-                    logToPanel(`[API] ❌ Échec de la requête (status ${result?.status || 'inconnu'})`);
-                    showWMToast("Erreur API lors de la défausse groupée.", false);
-                    // Remet les cartes en attente
-                    readyToDelete.forEach(item => remainingList.push({
-                        title: item.title, id: item.cardId, userCardId: item.userCardId
-                    }));
                 }
+
+                // Réintégration des erreurs et invalidItems
+                const newBulkList = [...invalidItems];
+                validItems.forEach(item => {
+                    if (failedIds.has(item.user_card_id)) {
+                        newBulkList.push(item); // On remet dans le Bulk
+                    } else {
+                        markCardAsProcessedByTitle(item.title);
+                    }
+                });
+
+                saveBulkList(newBulkList);
+                if (typeof result.balance === 'number') recordBalance(result.balance, 'bulk_discard');
             } else {
-                logToPanel(`❌ Aucune carte valide prête à être défaussée.`);
+                logToPanel(`❌ Échec API.`);
+                showWMToast("Erreur API lors de la défausse.", false);
             }
 
-            // ---- Phase 3 : nettoyage ----
-            saveBulkList(remainingList);
-            updateBulkUI();
-            logToPanel(`🏁 Bulk terminé. ${remainingList.length} restante(s).`);
+            if (typeof updateBulkUI === 'function') updateBulkUI();
             if (typeof updateAllBulkButtonsUI === 'function') updateAllBulkButtonsUI();
+            btn.disabled = false;
         });
+
         document.getElementById('wm-search-btn').addEventListener('click', async () => {
             const uuid = document.getElementById('wm-card-id-input').value.trim();
             const resultBox = document.getElementById('wm-result-box');
@@ -4498,6 +4855,24 @@
                 renderAltAccounts();
             }
         });
+
+        const multiSearchToggle = document.getElementById('wm-toggle-multi-search');
+        if (multiSearchToggle) {
+            multiSearchToggle.checked = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+            multiSearchToggle.addEventListener('change', (e) => {
+                localStorage.setItem('wmMultiSearchEnabled', e.target.checked);
+                logToPanel(`Recherche multi-comptes ${e.target.checked ? 'Activée' : 'Désactivée'}`);
+            });
+        }
+
+        window.wmShowMultiSearchError = function(msg) {
+            const errBox = document.getElementById('wm-alt-errors');
+            if (!errBox) return;
+            const errEl = document.createElement('div');
+            errEl.textContent = `⚠️ ${msg}`;
+            errBox.appendChild(errEl);
+            setTimeout(() => errEl.remove(), 10000);
+        };
 
         renderAltAccounts();
 
@@ -4954,8 +5329,6 @@
                 renderTagGroups();
             }
         });
-
-
 
         //ControlPanel fin
         renderSmartTradesList();
@@ -6110,6 +6483,7 @@
 
         renderPricesOnAllCards();
         if (typeof renderTagsOnAllCards === 'function') renderTagsOnAllCards();
+        renderAltBadgesOnAllCards();
         window.applyPersistentFilters();
 
         const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
@@ -6117,35 +6491,18 @@
 
         window._wmMutating = true;
         try {
-            document.querySelectorAll('.w-72.rounded-2xl:not(.wm-uuid-processed)').forEach(card => {
+            // NOUVEAU SÉLECTEUR pour détecter les nouvelles cartes à l'écran
+            const newCards = document.querySelectorAll('.w-72.rounded-2xl:not(.wm-uuid-processed), div.rounded-2xl.overflow-hidden.relative:not(.wm-uuid-processed)');
+
+            newCards.forEach(card => {
+                // On vérifie que c'est une vraie carte avant de l'analyser
+                if (!card.querySelector('h3') && !card.closest('.flex-col, .flex-row')?.querySelector('h2, h3')) return;
+
                 card.classList.add('wm-uuid-processed');
                 const cardData = getCardDataFromReact(card);
+
                 if (cardData && cardData.id) {
                     card.dataset.wmUuid = cardData.id;
-                    if (cardData && cardData.id) {
-                        card.dataset.wmUuid = cardData.id;
-
-                        // ---> BADGE MULTI-COMPTES <---
-                        if (window.wmAltCardOwners && window.wmAltCardOwners[cardData.id]) {
-                            const altName = window.wmAltCardOwners[cardData.id];
-                            let altBadge = card.querySelector('.wm-alt-badge');
-                            if (!altBadge) {
-                                altBadge = document.createElement('div');
-                                altBadge.className = 'wm-alt-badge';
-                                // Positionné en bas à droite
-                                altBadge.style.cssText = 'position:absolute; bottom:10px; right:10px; z-index:40; background:#fbbf24; color:#000; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.5); pointer-events:none;';
-                                altBadge.textContent = `👤 ${altName}`;
-                                card.appendChild(altBadge);
-
-                                // On grise légèrement la carte et on désactive tes boutons d'action locaux
-                                card.style.border = "2px solid #fbbf24";
-                                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'none');
-                            }
-                        } else {
-                            // Si c'est notre carte, on fetch son prix
-                            fetchPricesBackground(cardData.id, cardData.title);
-                        }
-                    }
                     fetchPricesBackground(cardData.id, cardData.title);
                 } else {
                     setTimeout(() => {
@@ -6159,18 +6516,55 @@
                 }
             });
 
-            injectBoosterButtons();
-
-            // NOUVELLE VÉRIFICATION : centralisée et compatible avec les UUIDs
-            if (typeof updateAllBulkButtonsUI === 'function') {
-                updateAllBulkButtonsUI();
-            }
+            if (typeof injectBoosterButtons === 'function') injectBoosterButtons();
+            if (typeof updateAllBulkButtonsUI === 'function') updateAllBulkButtonsUI();
 
         } finally {
             setTimeout(() => { window._wmMutating = false; }, 80);
         }
     });
     observer.observe(document.body, { childList: true, subtree: true });
+
+
+
+    function injectBulkButtonInCollection() {
+        if (!window.location.pathname.startsWith('/collection')) return;
+        if (document.getElementById('wm-btn-collection-bulk')) return;
+
+        // On cherche le bouton natif "Sélectionner"
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const selectBtn = buttons.find(b => b.textContent.trim() === 'Sélectionner');
+
+        if (selectBtn && selectBtn.parentNode) {
+            const bulkBtn = document.createElement('button');
+            bulkBtn.id = 'wm-btn-collection-bulk';
+            // On copie exactement les classes du bouton natif pour qu'il soit identique !
+            bulkBtn.className = selectBtn.className;
+            bulkBtn.style.borderColor = '#6366f1';
+            bulkBtn.style.color = '#a5b4fc';
+            bulkBtn.innerHTML = `🗑️ Afficher mon Bulk`;
+
+            bulkBtn.addEventListener('click', () => {
+                window.wmBulkViewActive = !window.wmBulkViewActive;
+                bulkBtn.style.background = window.wmBulkViewActive ? 'rgba(99,102,241,0.15)' : '';
+
+                if (window.wmBulkViewActive) {
+                    window.wmBulkFullCardsCache = null; // Force le rafraîchissement au clic
+                }
+
+                // L'astuce magique : On injecte le mot-clé dans la barre de recherche et on simule la frappe
+                const searchInput = document.querySelector('input[placeholder*="titre"]');
+                if (searchInput) {
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                    nativeInputValueSetter.call(searchInput, window.wmBulkViewActive ? '[WM-BULK]' : '');
+                    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            });
+
+            // On l'insère juste avant le bouton Sélectionner
+            selectBtn.parentNode.insertBefore(bulkBtn, selectBtn);
+        }
+    }
 
     // ============================================================
     // DÉTECTION SPA + BOUTON SUIVRE + PANEL SNIPER
@@ -6187,6 +6581,104 @@
             if (oldSniper) oldSniper.remove();
         }
         ensureTrackButton();
+        // --- GESTION DU BOUTON DÉFAUSSE PAGE ---
+        const bulkPageBtn = document.getElementById('wm-bulk-page-btn');
+        if (bulkPageBtn) {
+            const searchInput = document.querySelector('input[placeholder*="titre"]');
+            const isBulkView = searchInput && searchInput.value.includes('[WM-BULK]');
+            // Sélecteur corrigé pour capter les cartes de la grille ET les modales
+            const visibleCards = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative').length;
+
+            if (isBulkView && visibleCards > 0) {
+                bulkPageBtn.disabled = false;
+                bulkPageBtn.textContent = `🔥 Défausser la page (${visibleCards})`;
+            } else {
+                bulkPageBtn.disabled = true;
+                bulkPageBtn.textContent = isBulkView ? "🔥 Défausser la page (0)" : "🚫 Requis : Vue WM-BULK";
+            }
+        }
+        injectBulkButtonInCollection();
+
+        document.getElementById('wm-bulk-page-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('wm-bulk-page-btn');
+            if (btn.disabled) return;
+
+            const cardsEl = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative');
+            if (cardsEl.length === 0) return;
+
+            const bulkList = getBulkList();
+
+            const bulkMap = new Map();
+            bulkList.forEach(item => {
+                if (typeof item === 'object' && item.user_card_id && item.title) {
+                    const t = item.title.replace(/\s+/g, ' ').trim();
+                    if (!bulkMap.has(t)) bulkMap.set(t, []);
+                    bulkMap.get(t).push(item.user_card_id);
+                }
+            });
+
+            const pageUserCardIds = [];
+            cardsEl.forEach(card => {
+                const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+                if (titleEl) {
+                    const title = titleEl.textContent.replace(/\s+/g, ' ').trim();
+                    const availableIds = bulkMap.get(title);
+                    if (availableIds && availableIds.length > 0) pageUserCardIds.push(availableIds.shift());
+                }
+            });
+
+            if (pageUserCardIds.length === 0) {
+                logToPanel(`❌ Erreur: Impossible de faire correspondre les cartes à l'écran avec le cache Bulk.`);
+                return;
+            }
+
+            if (!confirm(`🔥 SÉCURITÉ : Défausser définitivement ces ${pageUserCardIds.length} cartes visibles ?`)) return;
+
+            logToPanel(`🚀 Bulk Delete (Page) : ${pageUserCardIds.length} cartes...`);
+            btn.disabled = true;
+            btn.textContent = "⏳ Exécution...";
+
+            const result = await executeBulkDiscard(pageUserCardIds);
+
+            if (result && result.success !== false) {
+                // Création d'un Set avec les IDs en erreur pour vérification rapide
+                const failedIds = new Set((result.failed || []).map(f => f.card_id || f.id));
+
+                if (failedIds.size > 0) {
+                    logToPanel(`⚠️ Partiel : ${result.count} défaussées, ${failedIds.size} erreurs.`);
+                    showWMToast(`${result.count} défaussées, ${failedIds.size} erreurs !`, false);
+                } else {
+                    logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
+                    showWMToast(`Page défaussée ! +${result.count} WB`, true);
+                }
+
+                // Nettoyage intelligent : on NE RETIRE QUE les cartes qui n'ont pas échoué
+                const newBulkList = bulkList.filter(item => {
+                    if (typeof item === 'object' && item.user_card_id) {
+                        const wasInBatch = pageUserCardIds.includes(item.user_card_id);
+                        const hasFailed = failedIds.has(item.user_card_id);
+
+                        if (wasInBatch && !hasFailed) return false; // Supprimée avec succès
+                    }
+                    return true; // Conservée (non traitée ou erreur)
+                });
+
+                saveBulkList(newBulkList);
+                if (typeof result.balance === 'number') recordBalance(result.balance, 'bulk_discard');
+
+                const searchInput = document.querySelector('input[placeholder*="titre"]');
+                if (searchInput) searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+                logToPanel(`❌ Échec API lors de la défausse de la page.`);
+                showWMToast("Erreur API lors de la défausse.", false);
+            }
+
+            if (typeof updateBulkUI === 'function') updateBulkUI();
+            if (typeof updateAllBulkButtonsUI === 'function') updateAllBulkButtonsUI();
+
+            // Réactivation du bouton
+            setTimeout(() => { btn.disabled = false; btn.textContent = "🔥 Défausser la page"; }, 500);
+        });
 
         // Sur une page d'enchère : s'assurer que le panneau est là et à jour
         const auctionId = getAuctionIdFromUrl();
