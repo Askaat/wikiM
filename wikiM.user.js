@@ -11,7 +11,7 @@
     // ============================================================
     const WM_PATCH_NOTES = [
         {
-            version: "2.2.0",
+            version: "2.2.1",
             date: "07/10/2026 - 13:00",
             changes: [
                 "Ajout de la possibilité de voir les cartes de notre liste Bulk + Changement de la logique pour le bulk delete -> Bien plus rapide et moins de requêtes. Ajout possibilité chercher cartes sur des alts"
@@ -2338,216 +2338,203 @@
     };
 
     // ============================================================
-    // INTERCEPTEUR FETCH CLASSIQUE (Multi-comptes, Abort & API)
+    // INTERCEPTEUR FETCH CLASSIQUE (Multi-comptes, Abort, Bulk & API)
     // ============================================================
     window.wmAltCardOwners = {};
     window.wmMultiSearchCache = null;
     window.wmMultiSearchPromise = null;
-    window.wmMultiSearchAbortController = null; // Le contrôleur d'annulation
+    window.wmMultiSearchAbortController = null;
 
     const originalPageFetch = W.fetch;
     W.fetch = async function(...args) {
         let requestUrl = '';
         try {
-            if (args[0] instanceof Request || (W.Request && args[0] instanceof W.Request)) requestUrl = args[0].url;
-            else if (args[0] instanceof URL || (W.URL && args[0] instanceof W.URL)) requestUrl = args[0].href;
+            if (args[0] && typeof args[0] === 'object' && args[0].url) requestUrl = args[0].url;
             else requestUrl = String(args[0]);
         } catch(e) { requestUrl = 'unknown'; }
 
+        // --- PARSING SÉCURISÉ (Contourne le bug "URL is not a constructor") ---
+        let pathname = '';
+        let query = null;
+        let page = 0;
         try {
-            const urlObj = new URL(requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, ''));
-            const pathname = urlObj.pathname;
-            const query = urlObj.searchParams.get('q');
-            const page = parseInt(urlObj.searchParams.get('page') || '0', 10);
+            const urlStr = requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, '');
+            pathname = urlStr.split('?')[0].replace(/^https?:\/\/[^\/]+/, '');
 
-            const isMyCollection = pathname === '/api/my-collection';
-            const isMyStats = pathname === '/api/my-collection/stats';
+            const qMatch = urlStr.match(/[?&]q=([^&]*)/);
+            if (qMatch) query = decodeURIComponent(qMatch[1].replace(/\+/g, ' '));
 
-            const multiSearchEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+            const pMatch = urlStr.match(/[?&]page=(\d+)/);
+            if (pMatch) page = parseInt(pMatch[1], 10);
+        } catch(e) {}
 
-            // ---> ARCHITECTURE BULK (Supabase in. operator) <---
-            if (query === '[WM-BULK]' && (isMyCollection || isMyStats)) {
-                const bulkList = JSON.parse(localStorage.getItem('wmBulkList') || '[]');
-                const validBulk = bulkList.filter(item => typeof item === 'object' && item.user_card_id);
-                const ResponseConstructor = W.Response || Response;
+        const isMyCollection = pathname === '/api/my-collection';
+        const isMyStats = pathname === '/api/my-collection/stats';
+        const multiSearchEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+
+        // ---> ARCHITECTURE BULK (Supabase in. operator) <---
+        if (query === '[WM-BULK]' && (isMyCollection || isMyStats)) {
+            const bulkList = JSON.parse(localStorage.getItem('wmBulkList') || '[]');
+            const validBulk = bulkList.filter(item => typeof item === 'object' && item.user_card_id);
+            const ResponseConstructor = window.Response || W.Response || Response;
+
+            if (isMyStats) {
+                return new ResponseConstructor(JSON.stringify({
+                    total: validBulk.length, rarityCounts: {}, tagOptions: []
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+
+            if (isMyCollection) {
+                const start = page * 50;
+                const chunk = validBulk.slice(start, start + 50);
+                const ids = chunk.map(c => c.user_card_id);
+
+                if (ids.length === 0) {
+                    return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+
+                try {
+                    const authObj = W.wmAuth || window.wmAuth;
+                    if (!authObj || !authObj.token) throw new Error("Token d'authentification introuvable");
+
+                    const token = authObj.token.startsWith('Bearer') ? authObj.token : `Bearer ${authObj.token}`;
+
+                    const res = await originalPageFetch(`https://${SUPABASE_REF}.supabase.co/rest/v1/user_cards?select=id,is_shiny,obtained_at,card:card_id(*)&id=in.(${ids.join(',')})`, {
+                        method: 'GET',
+                        headers: {
+                            'apikey': authObj.apikey,
+                            'authorization': token,
+                            'accept': 'application/json',
+                            'content-profile': 'public'
+                        },
+                        credentials: 'omit'
+                    });
+
+                    if (res.ok) {
+                        const sbData = await res.json();
+                        const formattedCollection = sbData.map(item => ({
+                            id: item.id,
+                            card_id: item.card?.id,
+                            user_id: W.wmUserId,
+                            is_shiny: item.is_shiny,
+                            obtained_at: item.obtained_at,
+                            card: item.card
+                        }));
+
+                        return new ResponseConstructor(JSON.stringify({
+                            collection: formattedCollection, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
+                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    }
+                } catch (e) { console.error("[WM-Bulk] ❌ Erreur fetch Supabase:", e); }
+
+                return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+        }
+
+        // ---> ARCHITECTURE DOUBLE INTERCEPTION (Multi-comptes) <---
+        if (multiSearchEnabled && (isMyCollection || isMyStats) && query && query.trim() !== '') {
+            const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+
+            if (altAccounts.length > 0) {
+                if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
+                    if (window.wmMultiSearchAbortController) window.wmMultiSearchAbortController.abort();
+
+                    window.wmMultiSearchAbortController = new AbortController();
+                    const signal = window.wmMultiSearchAbortController.signal;
+
+                    window.wmMultiSearchPromise = (async () => {
+                        window.wmMultiSearchCache = { query: query, cards: [] };
+
+                        const fetchAllPages = async (baseUrl, isAlt) => {
+                            let p = 0; let allCards = [];
+                            while (p < 10) {
+                                if (signal.aborted) throw new Error('aborted');
+                                const sep = baseUrl.includes('?') ? '&' : '?';
+                                const statsParam = isAlt ? 'stats=1' : 'stats=0';
+                                const fetchUrl = `${baseUrl}${sep}page=${p}&${statsParam}`;
+
+                                try {
+                                    const res = await originalPageFetch(fetchUrl, { credentials: "include", signal });
+                                    if (!res.ok) {
+                                        if (isAlt) window.wmShowMultiSearchError?.(`Erreur ${res.status} sur ${baseUrl.split('/')[3]}`);
+                                        break;
+                                    }
+                                    const data = await res.json();
+                                    const items = data.collection || [];
+                                    if (items.length === 0) break;
+
+                                    allCards = allCards.concat(items);
+                                    if (items.length < 50) break;
+                                    p++;
+                                    await new Promise(r => setTimeout(r, 150));
+                                } catch (err) {
+                                    if (err.name === 'AbortError') throw new Error('aborted');
+                                    if (isAlt) window.wmShowMultiSearchError?.(`Impossible d'atteindre ${baseUrl.split('/')[3]}`);
+                                    break;
+                                }
+                            }
+                            return allCards;
+                        };
+
+                        try {
+                            const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`, false);
+                            window.wmMultiSearchCache.cards.push(...myCards);
+
+                            for (const alt of altAccounts) {
+                                if (signal.aborted) throw new Error('aborted');
+                                const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}&pending=1`, true);
+
+                                altCards.forEach(c => {
+                                    if (c.id) window.wmAltCardOwners[c.id] = alt;
+                                    if (c.card_id) window.wmAltCardOwners[c.card_id] = alt;
+                                    if (c.card && c.card.id) window.wmAltCardOwners[c.card.id] = alt;
+                                    const title = c.card?.wikipedia_title || c.wikipedia_title;
+                                    if (title) {
+                                        const normTitle = title.replace(/\s+/g, ' ').trim();
+                                        window.wmAltCardOwners[normTitle] = alt;
+                                    }
+                                });
+
+                                window.wmMultiSearchCache.cards.push(...altCards);
+                            }
+                        } catch (e) {
+                            if (e.message !== 'aborted') console.error("[WM-Fetch] ❌ Erreur :", e);
+                        }
+                    })();
+                }
+
+                if (window.wmMultiSearchPromise) await window.wmMultiSearchPromise;
+
+                const ResponseConstructor = window.Response || W.Response || Response;
+
+                if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
+                    if (isMyStats) return new ResponseConstructor(JSON.stringify({ total: 0, rarityCounts: {}, tagOptions: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    if (isMyCollection) return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
 
                 if (isMyStats) {
                     return new ResponseConstructor(JSON.stringify({
-                        total: validBulk.length, rarityCounts: {}, tagOptions: []
+                        total: window.wmMultiSearchCache.cards.length,
+                        rarityCounts: {}, tagOptions: []
                     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 }
 
                 if (isMyCollection) {
                     const start = page * 50;
-                    const chunk = validBulk.slice(start, start + 50);
-                    const ids = chunk.map(c => c.user_card_id);
-
-                    if (ids.length === 0) {
-                        return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                    }
-
-                    try {
-                        // FIX : Utilisation de W.wmAuth (unsafeWindow) qui contient le VRAI token extrait des cookies
-                        const authObj = W.wmAuth || window.wmAuth;
-                        if (!authObj || !authObj.token) throw new Error("Token d'authentification introuvable");
-
-                        const token = authObj.token.startsWith('Bearer') ? authObj.token : `Bearer ${authObj.token}`;
-
-                        const res = await originalPageFetch(`https://${SUPABASE_REF}.supabase.co/rest/v1/user_cards?select=id,is_shiny,obtained_at,card:card_id(*)&id=in.(${ids.join(',')})`, {
-                            method: 'GET',
-                            headers: {
-                                'apikey': authObj.apikey,
-                                'authorization': token,
-                                'accept': 'application/json',
-                                'content-profile': 'public'
-                            },
-                            credentials: 'omit'
-                        });
-
-                        if (res.ok) {
-                            const sbData = await res.json();
-                            // Formatage pour que React croie que c'est l'API native
-                            const formattedCollection = sbData.map(item => ({
-                                id: item.id,
-                                card_id: item.card?.id,
-                                user_id: W.wmUserId,
-                                is_shiny: item.is_shiny,
-                                obtained_at: item.obtained_at,
-                                card: item.card
-                            }));
-
-                            return new ResponseConstructor(JSON.stringify({
-                                collection: formattedCollection, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
-                            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                        } else {
-                            console.error(`[WM-Bulk] ❌ Erreur API Supabase: HTTP ${res.status}`);
-                        }
-                    } catch (e) {
-                        console.error("[WM-Bulk] ❌ Erreur fetch Supabase:", e);
-                    }
-
-                    // Fallback en cas d'erreur
-                    return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    const paginated = window.wmMultiSearchCache.cards.slice(start, start + 50);
+                    return new ResponseConstructor(JSON.stringify({
+                        collection: paginated, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 }
             }
-
-            // ---> ARCHITECTURE DOUBLE INTERCEPTION <---
-            if (multiSearchEnabled && (isMyCollection || isMyStats) && query && query.trim() !== '') {
-                const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
-
-                if (altAccounts.length > 0) {
-
-                    if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
-
-                        // 🛑 Si une ancienne recherche est en cours, on la tue immédiatement !
-                        if (window.wmMultiSearchAbortController) {
-                            window.wmMultiSearchAbortController.abort();
-                        }
-
-                        window.wmMultiSearchAbortController = new AbortController();
-                        const signal = window.wmMultiSearchAbortController.signal;
-
-                        window.wmMultiSearchPromise = (async () => {
-                            window.wmMultiSearchCache = { query: query, cards: [] };
-
-                            const fetchAllPages = async (baseUrl, isAlt) => {
-                                let p = 0; let allCards = [];
-                                while (p < 10) {
-                                    if (signal.aborted) throw new Error('aborted');
-
-                                    const sep = baseUrl.includes('?') ? '&' : '?';
-                                    const statsParam = isAlt ? 'stats=1' : 'stats=0';
-                                    const fetchUrl = `${baseUrl}${sep}page=${p}&${statsParam}`;
-
-                                    try {
-                                        const res = await originalPageFetch(fetchUrl, { credentials: "include", signal });
-                                        if (!res.ok) {
-                                            if (isAlt) window.wmShowMultiSearchError?.(`Erreur ${res.status} sur ${baseUrl.split('/')[3]}`);
-                                            break;
-                                        }
-
-                                        const data = await res.json();
-                                        const items = data.collection || [];
-                                        if (items.length === 0) break;
-
-                                        allCards = allCards.concat(items);
-                                        if (items.length < 50) break;
-                                        p++;
-                                        await new Promise(r => setTimeout(r, 150));
-                                    } catch (err) {
-                                        if (err.name === 'AbortError') throw new Error('aborted');
-                                        if (isAlt) window.wmShowMultiSearchError?.(`Impossible d'atteindre ${baseUrl.split('/')[3]}`);
-                                        break;
-                                    }
-                                }
-                                return allCards;
-                            };
-
-                            try {
-                                const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`, false);
-                                window.wmMultiSearchCache.cards.push(...myCards);
-
-                                for (const alt of altAccounts) {
-                                    if (signal.aborted) throw new Error('aborted');
-                                    const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}&pending=1`, true);
-
-                                    // Sauvegarde blindée (ID global, ID utilisateur et Titre)
-                                    // Sauvegarde blindée (ID global, ID utilisateur et Titre)
-                                        altCards.forEach(c => {
-                                            if (c.id) window.wmAltCardOwners[c.id] = alt;
-                                            if (c.card_id) window.wmAltCardOwners[c.card_id] = alt;
-                                            if (c.card && c.card.id) window.wmAltCardOwners[c.card.id] = alt;
-                                            const title = c.card?.wikipedia_title || c.wikipedia_title;
-                                            if (title) {
-                                                const normTitle = title.replace(/\s+/g, ' ').trim();
-                                                window.wmAltCardOwners[normTitle] = alt;
-                                                console.log(`[WM-Multi] 📝 Mémorisé: "${normTitle}" => ${alt} (ID: ${c.id})`);
-                                            }
-                                        });
-
-                                    window.wmMultiSearchCache.cards.push(...altCards);
-                                }
-                            } catch (e) {
-                                if (e.message !== 'aborted') console.error("[WM-Fetch] ❌ Erreur :", e);
-                            }
-                        })();
-                    }
-
-                    // On attend la fin de la promesse (ou son annulation)
-                    if (window.wmMultiSearchPromise) await window.wmMultiSearchPromise;
-
-                    const ResponseConstructor = W.Response || Response;
-
-                    // Si on a tapé une nouvelle lettre entre temps, on renvoie une réponse vide pour ne pas crasher React
-                    if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
-                        if (isMyStats) return new ResponseConstructor(JSON.stringify({ total: 0, rarityCounts: {}, tagOptions: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                        if (isMyCollection) return new ResponseConstructor(JSON.stringify({ collection: [], total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                    }
-
-                    // Réponses finales falsifiées
-                    if (isMyStats) {
-                        return new ResponseConstructor(JSON.stringify({
-                            total: window.wmMultiSearchCache.cards.length,
-                            rarityCounts: {}, tagOptions: []
-                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                    }
-
-                    if (isMyCollection) {
-                        const start = page * 50;
-                        const paginated = window.wmMultiSearchCache.cards.slice(start, start + 50);
-                        return new ResponseConstructor(JSON.stringify({
-                            collection: paginated, total: null, rarityCounts: {}, tagOptions: [], pendingTradeCardIds: []
-                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                    }
-                }
-            }
-        } catch (e) { console.error("[WM-Fetch] ❌ Erreur :", e); }
+        }
 
         // REQUÊTES STANDARDS (Prix, Tags, etc.)
         const response = await originalPageFetch.apply(this, args);
         try {
-            const urlObj2 = new URL(requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, ''));
-            const pathname2 = urlObj2.pathname;
+            let pathname2 = '';
+            const urlStr2 = requestUrl.startsWith('http') ? requestUrl : window.location.origin + '/' + requestUrl.replace(/^\/?/, '');
+            pathname2 = urlStr2.split('?')[0].replace(/^https?:\/\/[^\/]+/, '');
 
             if (pathname2.includes('sales') && requestUrl.includes('scope=summary')) {
                 const clone = response.clone();
