@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Collection, Quick Actions & Bulk Discard
 // ============================================================
 (function(W, WikiM) {
@@ -20,16 +20,16 @@
         const allFailed = [];
         let anySuccess = false;
 
-        logToPanel(`📦 Bulk discard : ${userCardIdsArray.length} cartes en ${totalChunks} lot(s) de ${CHUNK_SIZE} max`);
+        window.logToPanel(`📦 Bulk discard : ${userCardIdsArray.length} cartes en ${totalChunks} lot(s) de ${CHUNK_SIZE} max`);
 
         for (let i = 0; i < totalChunks; i++) {
             const chunk = userCardIdsArray.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-            logToPanel(`[Lot ${i + 1}/${totalChunks}] Envoi de ${chunk.length} cartes...`);
+            window.logToPanel(`[Lot ${i + 1}/${totalChunks}] Envoi de ${chunk.length} cartes...`);
 
             let response, data;
             try {
                 // Retry sur chaque chunk
-                data = await withRetry(async () => {
+                data = await window.withRetry(async () => {
                     response = await fetch("https://www.wiki-masters.com/api/user-cards/bulk-discard", {
                         method: "POST",
                         credentials: "include",
@@ -65,15 +65,15 @@
                 if (data?.failed && Array.isArray(data.failed)) {
                     allFailed.push(...data.failed);
                     if (data.failed.length > 0) {
-                        logToPanel(`[Lot ${i + 1}/${totalChunks}] ⚠️ ${data.failed.length} échecs (${data.failed[0]?.error || '?'})`);
+                        window.logToPanel(`[Lot ${i + 1}/${totalChunks}] ⚠️ ${data.failed.length} échecs (${data.failed[0]?.error || '?'})`);
                     }
                 }
 
-                logToPanel(`[Lot ${i + 1}/${totalChunks}] ✅ ${discarded} défaussées (cumul : ${totalDiscarded})`);
+                window.logToPanel(`[Lot ${i + 1}/${totalChunks}] ✅ ${discarded} défaussées (cumul : ${totalDiscarded})`);
 
             } catch (e) {
                 console.error(`[WM-Bulk] ❌ Lot ${i + 1} échoué :`, e);
-                logToPanel(`[Lot ${i + 1}/${totalChunks}] ❌ Échec : ${e.message}`);
+                window.logToPanel(`[Lot ${i + 1}/${totalChunks}] ❌ Échec : ${e.message}`);
                 // Ajoute toutes les cartes du lot raté dans les failed
                 chunk.forEach(id => allFailed.push({ card_id: id, error: 'chunk_failed' }));
             }
@@ -100,9 +100,9 @@
     // ============================================================
     async function resolveUserCardId(title) {
         if (!title) return null;
-        if (userCardIdCache.has(title)) return userCardIdCache.get(title);
+        if (window.userCardIdCache.has(title)) return window.userCardIdCache.get(title);
         if (window.wmInventoryMap[title]) {
-            userCardIdCache.set(title, window.wmInventoryMap[title]);
+            window.userCardIdCache.set(title, window.wmInventoryMap[title]);
             return window.wmInventoryMap[title];
         }
         try {
@@ -112,7 +112,7 @@
             const items = data.collection || data.cards || data.data || [];
             const match = items.find(c => (c.card?.wikipedia_title || c.wikipedia_title) === title);
             if (match && match.id) {
-                userCardIdCache.set(title, match.id);
+                window.userCardIdCache.set(title, match.id);
                 window.wmInventoryMap[title] = match.id;
                 return match.id;
             }
@@ -183,7 +183,7 @@
             return true;
         } catch (e) {
             if (e.name === 'QuotaExceededError') {
-                logToPanel('⚠️ Cache collection : quota localStorage dépassé');
+                window.logToPanel('⚠️ Cache collection : quota localStorage dépassé');
             } else {
                 console.warn('[WM-Cache] Erreur save:', e);
             }
@@ -292,7 +292,7 @@
         }
 
         console.log('[WM-Cache] Fetch complet...');
-        const cards = await fetchAllCollectionCards(onProgress);
+        const cards = await window.fetchAllCollectionCards(onProgress);
         window.wmCollectionCache.cards = cards.map(wmSerializeCard);
         wmSaveCollectionCache();
         wmBuildCardIdIndex();
@@ -363,7 +363,7 @@
             }
 
             try {
-                const r = await withRetry(async () => {
+                const r = await window.withRetry(async () => {
                     const resp = await fetch(
                         `/api/my-collection?q=${encodeURIComponent(title)}&page=0&stats=0`,
                         { credentials: 'include', headers: { 'Accept': '*/*' } }
@@ -435,11 +435,11 @@
     function evaluateRule(card, rule, prices) {
         if (!rule.conditions || rule.conditions.length === 0) return false;
         for (const cond of rule.conditions) {
-            const field = WM_RULE_FIELDS[cond.field];
+            const field = window.WM_RULE_FIELDS[cond.field];
             if (!field) return false;
             const value = field.getter(card, prices);
             if (value === null || value === undefined) return false;
-            const op = WM_RULE_OPERATORS[cond.operator];
+            const op = window.WM_RULE_OPERATORS[cond.operator];
             if (!op) return false;
             if (!op(value, cond.value)) return false;
         }
@@ -515,7 +515,7 @@
             if (!titleEl) return;
             const title = titleEl.textContent.trim();
             const cachedUuid = card.dataset.wmUuid;
-            if (cachedUuid && !window.wmPrices[title]) fetchPricesBackground(cachedUuid, title);
+            if (cachedUuid && !window.wmPrices[title]) window.fetchPricesBackground(cachedUuid, title);
             const existingPanel = card.querySelector('.wm-price-panel');
             const priceData = window.wmPrices[title];
             if (priceData) {
@@ -570,10 +570,10 @@
                 const confirmBtn = buttons.find(b => /défausser|confirmer/i.test(b.textContent) && b.className.includes('red') && b.offsetParent !== null);
                 if (confirmBtn && !confirmBtn.disabled) {
                     clearInterval(checkModal);
-                    if (isDirectDiscard) { confirmBtn.click(); if (window.wmPendingCardTitle) markCardAsProcessedByTitle(window.wmPendingCardTitle); }
+                    if (isDirectDiscard) { confirmBtn.click(); if (window.wmPendingCardTitle) window.markCardAsProcessedByTitle(window.wmPendingCardTitle); }
                     else {
                         confirmBtn.addEventListener('click', () => {
-                            if (window.wmPendingCardTitle) markCardAsProcessedByTitle(window.wmPendingCardTitle);
+                            if (window.wmPendingCardTitle) window.markCardAsProcessedByTitle(window.wmPendingCardTitle);
                         }, { once: true });
                     }
                 }
@@ -601,7 +601,7 @@
             if (auctionBtn && !auctionBtn.disabled) {
                 clearInterval(checkModal);
                 auctionBtn.click();
-                if (window.wmPendingCardTitle) markCardAsProcessedByTitle(window.wmPendingCardTitle);
+                if (window.wmPendingCardTitle) window.markCardAsProcessedByTitle(window.wmPendingCardTitle);
             } else if (attempts > 150) { clearInterval(checkModal); }
         }, 50);
     }
@@ -610,39 +610,38 @@
         const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
         if (!titleEl) return;
         const title = titleEl.textContent.trim();
-        let list = getBulkList();
+        let list = window.getBulkList();
 
         const existingIndex = list.findIndex(item => (typeof item === 'string' ? item : item.title) === title);
 
         if (existingIndex > -1) {
             list.splice(existingIndex, 1);
-            saveBulkList(list);
-            logToPanel(`[Bulk] Retiré : ${title}`);
+            window.saveBulkList(list);
+            window.logToPanel(`[Bulk] Retiré : ${title}`);
         } else {
-            // Extraction du card_id via React ou data-attribute
             const cardData = getCardDataFromReact(card);
-            const cardId = cardData ? cardData.id : (card.dataset.wmUuid || null);
-
-            // 🎯 Résolution immédiate du user_card_id via l'index local
             let userCardId = null;
-            if (cardId && window.wmCardIdToUserCardId.has(cardId)) {
-                userCardId = window.wmCardIdToUserCardId.get(cardId);
-            }
 
-            list.push({ title: title, id: cardId, userCardId: userCardId });
-            saveBulkList(list);
-
-            if (userCardId) {
-                logToPanel(`[Bulk] ✅ Ajouté : ${title} (user_card_id résolu)`);
-            } else if (cardId) {
-                logToPanel(`[Bulk] ⏳ Ajouté : ${title} (user_card_id sera cherché au moment du delete)`);
+            if (cardData) {
+                // On croise toutes nos données pour extraire l'ID physique avec certitude
+                if (cardData.card_id && window.wmCardIdToUserCardId.has(cardData.card_id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                } else if (window.wmCardIdToUserCardId.has(cardData.id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                } else {
+                    userCardId = cardData.id; // Fallback
+                }
             } else {
-                logToPanel(`[Bulk] ⚠️ Ajouté : ${title} (aucun ID trouvé)`);
+                userCardId = card.dataset.wmUuid || null;
             }
+
+            list.push({ title: title, user_card_id: userCardId, id: cardData?.id, userCardId: userCardId });
+            window.saveBulkList(list);
+            window.logToPanel(`[Bulk] ✅ Ajouté : ${title}`);
         }
 
-        updateBulkUI();
-        updateAllBulkButtonsUI();
+        window.updateBulkUI();
+        window.updateAllBulkButtonsUI();
     }
 
     function stopPropagationOnElement(element) {
@@ -682,7 +681,7 @@
                 const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
                 if (!titleEl) return;
                 const title = titleEl.textContent.trim();
-                const inList = isTitleInBulkList(title);
+                const inList = window.isTitleInBulkList(title);
                 if (inList) {
                     bulkBtn.classList.add('wm-btn-bulk-active');
                     bulkBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -710,6 +709,59 @@
         });
     }
 
+    /**
+     * Injecte une case à cocher 'Multi-comptes' dans la barre de recherche de la collection
+     */
+    function ensureCollectionMultiSearchToggle() {
+        if (!window.location.pathname.includes('/collection')) return;
+        if (document.getElementById('wm-col-multi-toggle')) return;
+
+        // Trouver le champ de recherche de la collection
+        const searchInput = document.querySelector('input[placeholder*="echerche"], input[type="search"], input[placeholder*="Search"]');
+        if (!searchInput) return;
+
+        const parent = searchInput.parentElement;
+        if (!parent) return;
+
+        const isEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+
+        const wrapper = document.createElement('label');
+        wrapper.id = 'wm-col-multi-wrapper';
+        wrapper.style.cssText = 'display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; color:#fbbf24; font-weight:bold; margin-left:8px; user-select:none; white-space:nowrap;';
+        wrapper.innerHTML = `
+            <input type="checkbox" id="wm-col-multi-toggle" ${isEnabled ? 'checked' : ''} style="cursor:pointer; accent-color:#fbbf24;">
+            <span>👥 Multi-comptes</span>
+            <span id="wm-multi-progress" style="font-size:11px; margin-left:8px; font-weight:normal; transition:color 0.2s;"></span>
+        `;
+
+        wrapper.querySelector('input').addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            localStorage.setItem('wmMultiSearchEnabled', checked ? 'true' : 'false');
+            window.logToPanel(checked ? '👥 Recherche multi-comptes activée' : '👤 Recherche multi-comptes désactivée');
+            const panelToggle = document.getElementById('wm-pref-multi-enabled');
+            if (panelToggle) panelToggle.checked = checked;
+        });
+
+        if (parent.parentElement && parent.parentElement.classList.contains('flex')) {
+            parent.parentElement.appendChild(wrapper);
+        } else {
+            parent.appendChild(wrapper);
+        }
+    }
+
+    function updateMultiSearchProgress(text, isDone = false) {
+        const el = document.getElementById('wm-multi-progress');
+        if (el) {
+            el.textContent = text;
+            el.style.color = isDone ? '#10b981' : '#fbbf24';
+            if (isDone) {
+                setTimeout(() => { if (el && el.textContent === text) el.textContent = ''; }, 4500);
+            }
+        }
+    }
+    window.updateMultiSearchProgress = updateMultiSearchProgress;
+    window.WikiM.updateMultiSearchProgress = updateMultiSearchProgress;
+
     // ============================================================
     // NAVIGATION ENTRE CARTES DANS LE MODAL (COLLECTION)
     // ============================================================
@@ -721,8 +773,8 @@
     // Modal de carte
     const WM_MODAL_SELECTOR = 'div.card-frame.animate-fade-in-up';
 
-    let wmCurrentCardIndex = -1;
-    let wmCurrentCardTitle = null;
+    window.wmCurrentCardIndex = window.wmCurrentCardIndex ?? -1;
+    window.wmCurrentCardTitle = window.wmCurrentCardTitle ?? null;
 
     /**
  * Récupère les cartes visibles de la collection.
@@ -730,8 +782,9 @@
  * (filtre pour éviter les faux positifs).
  */
     function getCollectionCards() {
+        const modal = document.querySelector(WM_MODAL_SELECTOR);
         return Array.from(document.querySelectorAll(WM_CARD_SELECTOR))
-            .filter(el => el.querySelector('img'));
+            .filter(el => el.querySelector('img') && (!modal || !modal.contains(el)));
     }
 
     /**
@@ -787,45 +840,78 @@
     /**
  * Navigue vers l'index cible dans la liste des cartes.
  */
-        function navigateToCardIndex(targetIdx) {
+    function navigateToCardIndex(targetIdx) {
+        if (window._wmNavigating) return;
+        window._wmNavigating = true;
+
         const cards = getCollectionCards();
+        if (!cards.length) {
+            window._wmNavigating = false;
+            return;
+        }
 
         // --- GESTION DU CHANGEMENT DE PAGE ---
         if (targetIdx < 0 || targetIdx >= cards.length) {
             const isNext = targetIdx >= cards.length;
-            const btnText = isNext ? 'Suivant →' : '← Précédent';
+            const btnKeyword = isNext ? 'Suivant' : 'Précédent';
 
-            // Recherche du bouton de pagination actif
+            // Recherche du bouton de pagination actif (supporte les variantes d'icônes/flèches)
             const buttons = Array.from(document.querySelectorAll('button'));
-            const targetBtn = buttons.find(b => b.textContent.trim() === btnText && !b.disabled);
+            const targetBtn = buttons.find(b => !b.disabled && b.textContent.includes(btnKeyword));
 
             if (!targetBtn) {
                 console.log(`[WM-Nav] 🛑 Fin de la liste, et page ${isNext ? 'suivante' : 'précédente'} indisponible.`);
+                window._wmNavigating = false;
                 return;
             }
 
-            console.log(`[WM-Nav] 🔄 Changement de page : clic sur "${btnText}"...`);
+            console.log(`[WM-Nav] 🔄 Changement de page : clic sur bouton "${btnKeyword}"...`);
 
             // 1) Fermer le modal actuel
             closeCardModal();
 
-            // 2) Mémoriser la première carte pour détecter le rechargement de la grille par React
+            // 2) Mémoriser les titres de la page actuelle pour s'assurer que la nouvelle page a bien chargé
+            const oldTitles = new Set(cards.map(c => getCardTitleFromEl(c)).filter(Boolean));
             const oldFirstCard = cards[0];
 
             // 3) Déclencher le changement de page
             targetBtn.click();
 
-            // 4) Attendre que la grille se mette à jour
+            // 4) Attendre que la requête réseau soit terminée ET que la grille React soit mise à jour
             let pageAttempts = 0;
             const waitForPage = setInterval(() => {
                 pageAttempts++;
+
+                // Tant qu'une requête collection est en cours de transfert, on attend impérativement
+                if (window.wmCollectionLoading) {
+                    if (pageAttempts > 120) {
+                        clearInterval(waitForPage);
+                        window._wmNavigating = false;
+                    }
+                    return;
+                }
+
                 const freshCards = getCollectionCards();
+                if (!freshCards.length) {
+                    if (pageAttempts > 120) {
+                        clearInterval(waitForPage);
+                        window._wmNavigating = false;
+                    }
+                    return;
+                }
 
-                // La page a changé si le premier élément du DOM est différent
-                if (freshCards.length > 0 && (freshCards[0] !== oldFirstCard || pageAttempts > 20)) {
+                const newFirstTitle = getCardTitleFromEl(freshCards[0]);
+                const isDifferentTitle = Boolean(newFirstTitle && !oldTitles.has(newFirstTitle));
+
+                if (pageAttempts % 10 === 0) {
+                    console.log(`[WM-Nav] ⏳ En attente nouvelle page (req: ${Boolean(window.wmCollectionLoading)}, titre vu: "${newFirstTitle}")`);
+                }
+
+                // Si le titre de la 1ère carte est nouveau OU si l'élément DOM a changé avec un titre valide
+                if (isDifferentTitle || pageAttempts > 80) {
                     clearInterval(waitForPage);
+                    console.log(`[WM-Nav] 🎯 Page chargée détectée (titre: "${newFirstTitle}")`);
 
-                    // Cible la première carte (si on avance) ou la dernière (si on recule)
                     const newTargetIdx = isNext ? 0 : freshCards.length - 1;
                     const newTargetCard = freshCards[newTargetIdx];
                     const newTargetTitle = getCardTitleFromEl(newTargetCard);
@@ -839,15 +925,16 @@
                                 || newTargetCard;
                             clickable.click();
 
-                            wmCurrentCardIndex = newTargetIdx;
-                            wmCurrentCardTitle = newTargetTitle;
+                            window.wmCurrentCardIndex = newTargetIdx;
+                            window.wmCurrentCardTitle = newTargetTitle;
                             console.log(`[WM-Nav] ✅ Nouvelle page chargée, ouverture de "${newTargetTitle}"`);
-                        }, 150);
+                            setTimeout(() => { window._wmNavigating = false; }, 300);
+                        }, 200);
+                    } else {
+                        window._wmNavigating = false;
                     }
-                } else if (pageAttempts > 40) {
-                    clearInterval(waitForPage); // Sécurité anti-boucle
                 }
-            }, 50);
+            }, 60);
 
             return;
         }
@@ -876,9 +963,10 @@
                     || targetCard.querySelector('[role="button"]')
                     || targetCard;
                     clickable.click();
-                    wmCurrentCardIndex = targetIdx;
-                    wmCurrentCardTitle = targetTitle;
+                    window.wmCurrentCardIndex = targetIdx;
+                    window.wmCurrentCardTitle = targetTitle;
                     console.log(`[WM-Nav] ✅ Clic effectué sur index ${targetIdx}`);
+                    setTimeout(() => { window._wmNavigating = false; }, 200);
                 }, 150);
             }
         }, 50);
@@ -889,31 +977,32 @@
     window.WM_COLLECTION_CACHE_VERSION = WM_COLLECTION_CACHE_VERSION;
 
     // --- Cross-module exports ---
-    if (typeof executeBulkDiscard !== 'undefined') { window.executeBulkDiscard = executeBulkDiscard; window.WikiM.executeBulkDiscard = executeBulkDiscard; }
-    if (typeof resolveUserCardId !== 'undefined') { window.resolveUserCardId = resolveUserCardId; window.WikiM.resolveUserCardId = resolveUserCardId; }
-    if (typeof directDiscardAPI !== 'undefined') { window.directDiscardAPI = directDiscardAPI; window.WikiM.directDiscardAPI = directDiscardAPI; }
-    if (typeof wmLoadCollectionCache !== 'undefined') { window.wmLoadCollectionCache = wmLoadCollectionCache; window.WikiM.wmLoadCollectionCache = wmLoadCollectionCache; }
-    if (typeof wmSaveCollectionCache !== 'undefined') { window.wmSaveCollectionCache = wmSaveCollectionCache; window.WikiM.wmSaveCollectionCache = wmSaveCollectionCache; }
-    if (typeof wmClearCollectionCache !== 'undefined') { window.wmClearCollectionCache = wmClearCollectionCache; window.WikiM.wmClearCollectionCache = wmClearCollectionCache; }
-    if (typeof wmSerializeCard !== 'undefined') { window.wmSerializeCard = wmSerializeCard; window.WikiM.wmSerializeCard = wmSerializeCard; }
-    if (typeof wmDeserializeCard !== 'undefined') { window.wmDeserializeCard = wmDeserializeCard; window.WikiM.wmDeserializeCard = wmDeserializeCard; }
-    if (typeof wmBuildCardIdIndex !== 'undefined') { window.wmBuildCardIdIndex = wmBuildCardIdIndex; window.WikiM.wmBuildCardIdIndex = wmBuildCardIdIndex; }
-    if (typeof wmResolveUserCardId !== 'undefined') { window.wmResolveUserCardId = wmResolveUserCardId; window.WikiM.wmResolveUserCardId = wmResolveUserCardId; }
-    if (typeof getCollectionCards !== 'undefined') { window.getCollectionCards = getCollectionCards; window.WikiM.getCollectionCards = getCollectionCards; }
-    if (typeof getVisibleCollectionCards !== 'undefined') { window.getVisibleCollectionCards = getVisibleCollectionCards; window.WikiM.getVisibleCollectionCards = getVisibleCollectionCards; }
-    if (typeof evaluateRule !== 'undefined') { window.evaluateRule = evaluateRule; window.WikiM.evaluateRule = evaluateRule; }
-    if (typeof evaluateAllRules !== 'undefined') { window.evaluateAllRules = evaluateAllRules; window.WikiM.evaluateAllRules = evaluateAllRules; }
-    if (typeof getCardDataFromReact !== 'undefined') { window.getCardDataFromReact = getCardDataFromReact; window.WikiM.getCardDataFromReact = getCardDataFromReact; }
-    if (typeof renderTagsOnAllCards !== 'undefined') { window.renderTagsOnAllCards = renderTagsOnAllCards; window.WikiM.renderTagsOnAllCards = renderTagsOnAllCards; }
-    if (typeof renderPricesOnAllCards !== 'undefined') { window.renderPricesOnAllCards = renderPricesOnAllCards; window.WikiM.renderPricesOnAllCards = renderPricesOnAllCards; }
-    if (typeof handleQuickDiscard !== 'undefined') { window.handleQuickDiscard = handleQuickDiscard; window.WikiM.handleQuickDiscard = handleQuickDiscard; }
-    if (typeof handleQuickAuction !== 'undefined') { window.handleQuickAuction = handleQuickAuction; window.WikiM.handleQuickAuction = handleQuickAuction; }
-    if (typeof toggleBulkForCard !== 'undefined') { window.toggleBulkForCard = toggleBulkForCard; window.WikiM.toggleBulkForCard = toggleBulkForCard; }
-    if (typeof stopPropagationOnElement !== 'undefined') { window.stopPropagationOnElement = stopPropagationOnElement; window.WikiM.stopPropagationOnElement = stopPropagationOnElement; }
-    if (typeof shouldInjectActionButtons !== 'undefined') { window.shouldInjectActionButtons = shouldInjectActionButtons; window.WikiM.shouldInjectActionButtons = shouldInjectActionButtons; }
-    if (typeof injectBoosterButtons !== 'undefined') { window.injectBoosterButtons = injectBoosterButtons; window.WikiM.injectBoosterButtons = injectBoosterButtons; }
-    if (typeof getCardTitleFromEl !== 'undefined') { window.getCardTitleFromEl = getCardTitleFromEl; window.WikiM.getCardTitleFromEl = getCardTitleFromEl; }
-    if (typeof getOpenCardModal !== 'undefined') { window.getOpenCardModal = getOpenCardModal; window.WikiM.getOpenCardModal = getOpenCardModal; }
-    if (typeof closeCardModal !== 'undefined') { window.closeCardModal = closeCardModal; window.WikiM.closeCardModal = closeCardModal; }
-    if (typeof navigateToCardIndex !== 'undefined') { window.navigateToCardIndex = navigateToCardIndex; window.WikiM.navigateToCardIndex = navigateToCardIndex; }
+    window.executeBulkDiscard = WikiM.executeBulkDiscard = executeBulkDiscard;
+    window.resolveUserCardId = WikiM.resolveUserCardId = resolveUserCardId;
+    window.directDiscardAPI = WikiM.directDiscardAPI = directDiscardAPI;
+    window.wmLoadCollectionCache = WikiM.wmLoadCollectionCache = wmLoadCollectionCache;
+    window.wmSaveCollectionCache = WikiM.wmSaveCollectionCache = wmSaveCollectionCache;
+    window.wmClearCollectionCache = WikiM.wmClearCollectionCache = wmClearCollectionCache;
+    window.wmSerializeCard = WikiM.wmSerializeCard = wmSerializeCard;
+    window.wmDeserializeCard = WikiM.wmDeserializeCard = wmDeserializeCard;
+    window.wmBuildCardIdIndex = WikiM.wmBuildCardIdIndex = wmBuildCardIdIndex;
+    window.wmResolveUserCardId = WikiM.wmResolveUserCardId = wmResolveUserCardId;
+    window.getCollectionCards = WikiM.getCollectionCards = getCollectionCards;
+    window.getVisibleCollectionCards = WikiM.getVisibleCollectionCards = getVisibleCollectionCards;
+    window.evaluateRule = WikiM.evaluateRule = evaluateRule;
+    window.evaluateAllRules = WikiM.evaluateAllRules = evaluateAllRules;
+    window.getCardDataFromReact = WikiM.getCardDataFromReact = getCardDataFromReact;
+    window.renderTagsOnAllCards = WikiM.renderTagsOnAllCards = renderTagsOnAllCards;
+    window.renderPricesOnAllCards = WikiM.renderPricesOnAllCards = renderPricesOnAllCards;
+    window.handleQuickDiscard = WikiM.handleQuickDiscard = handleQuickDiscard;
+    window.handleQuickAuction = WikiM.handleQuickAuction = handleQuickAuction;
+    window.toggleBulkForCard = WikiM.toggleBulkForCard = toggleBulkForCard;
+    window.stopPropagationOnElement = WikiM.stopPropagationOnElement = stopPropagationOnElement;
+    window.shouldInjectActionButtons = WikiM.shouldInjectActionButtons = shouldInjectActionButtons;
+    window.injectBoosterButtons = WikiM.injectBoosterButtons = injectBoosterButtons;
+    window.getCardTitleFromEl = WikiM.getCardTitleFromEl = getCardTitleFromEl;
+    window.getOpenCardModal = WikiM.getOpenCardModal = getOpenCardModal;
+    window.closeCardModal = WikiM.closeCardModal = closeCardModal;
+    window.navigateToCardIndex = WikiM.navigateToCardIndex = navigateToCardIndex;
+    window.ensureCollectionMultiSearchToggle = WikiM.ensureCollectionMultiSearchToggle = ensureCollectionMultiSearchToggle;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

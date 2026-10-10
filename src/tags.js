@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Tags Engine, Rules & Tag Groups
 // ============================================================
 (function(W, WikiM) {
@@ -19,7 +19,7 @@
             if (!userId) throw new Error("ID utilisateur introuvable.");
 
             // 1. Récupération des user_card_id physiques
-            const physicalCards = await supabaseRequestWithRetry(
+            const physicalCards = await window.supabaseRequestWithRetry(
                 'GET',
                 `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
             );
@@ -53,10 +53,10 @@
                     summary: pc.summary || pc.extract || pc.description || ''
                 };
 
-                const desiredTagIds = evaluateAllRules(cardForEval, activeRules, window.wmPrices);
+                const desiredTagIds = window.evaluateAllRules(cardForEval, activeRules, window.wmPrices);
 
                 for (const tagId of desiredTagIds) {
-                    await supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
+                    await window.supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
                         user_card_id: physical.id,
                         tag_id: tagId
                     });
@@ -78,7 +78,7 @@
                     }
 
                     // On force le rafraîchissement immédiat de l'UI
-                    if (typeof renderTagsOnAllCards === 'function') renderTagsOnAllCards();
+                    if (typeof window.renderTagsOnAllCards === 'function') window.renderTagsOnAllCards();
 
                     await new Promise(resolve => setTimeout(resolve, 300));
                 }
@@ -90,7 +90,7 @@
 
 
     async function wmFetchTags() {
-        const tags = await supabaseRequestWithRetry('GET', '/rest/v1/tags?select=*');
+        const tags = await window.supabaseRequestWithRetry('GET', '/rest/v1/tags?select=*');
         window.wmTagsCache = tags || [];
         return window.wmTagsCache;
     }
@@ -98,7 +98,7 @@
     async function wmCreateTag(name, color) {
         const userId = W.wmAuth.userId;
         if (!userId) throw new Error('user_id manquant');
-        const result = await supabaseRequestWithRetry('POST', '/rest/v1/tags', {
+        const result = await window.supabaseRequestWithRetry('POST', '/rest/v1/tags', {
             user_id: userId, name, color
         });
         const newTag = Array.isArray(result) ? result[0] : result;
@@ -107,7 +107,7 @@
     }
 
     async function wmDeleteTag(tagId) {
-        await supabaseRequestWithRetry('DELETE', `/rest/v1/tags?id=eq.${tagId}`);
+        await window.supabaseRequestWithRetry('DELETE', `/rest/v1/tags?id=eq.${tagId}`);
         window.wmTagsCache = window.wmTagsCache.filter(t => t.id !== tagId);
     }
 
@@ -115,7 +115,7 @@
         if (window.wmUserCardTagsCache.has(userCardId)) {
             return window.wmUserCardTagsCache.get(userCardId);
         }
-        const rows = await supabaseRequestWithRetry('GET',
+        const rows = await window.supabaseRequestWithRetry('GET',
                                            `/rest/v1/user_card_tags?select=*&user_card_id=eq.${userCardId}`);
         const tagIds = new Set((rows || []).map(r => r.tag_id));
         window.wmUserCardTagsCache.set(userCardId, tagIds);
@@ -126,7 +126,7 @@
         const existing = await wmFetchUserCardTags(userCardId);
         if (existing.has(tagId)) return { ok: true, skipped: true };
         try {
-            await supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
+            await window.supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
                 user_card_id: userCardId,
                 tag_id: tagId
             });
@@ -145,7 +145,7 @@
         const existing = await wmFetchUserCardTags(userCardId);
         if (!existing.has(tagId)) return { ok: true, skipped: true };
         try {
-            await supabaseRequestWithRetry('DELETE',
+            await window.supabaseRequestWithRetry('DELETE',
                                   `/rest/v1/user_card_tags?user_card_id=eq.${userCardId}&tag_id=eq.${tagId}`);
             existing.delete(tagId);
             return { ok: true, skipped: false };
@@ -192,7 +192,7 @@
             label: 'Prix moyen',
             type: 'number',
             getter: (card, prices) => {
-                return wmGetPriceFor(card.title, card.rarity);
+                return window.wmGetPriceFor(card.title, card.rarity);
             }
         },
         'rarity': { label: 'Rareté', type: 'enum', values: ['C','PC','R','SR','UR','L'],
@@ -359,6 +359,8 @@
             }
         });
 
+        window.renderTagGroups = renderTagGroups;
+        window.WikiM.renderTagGroups = renderTagGroups;
     }
     window.initTagGroupsUI = initTagGroupsUI;
     window.WikiM.initTagGroupsUI = initTagGroupsUI;
@@ -377,26 +379,29 @@
             autoTagCheckbox.checked = localStorage.getItem('wmAutoTagEnabled') === 'true';
         }
 
-        const fillBtn = document.getElementById('wm-cache-fill-btn');
-        if (fillBtn && !fillBtn._wmBound) {
-            fillBtn._wmBound = true;
-            fillBtn.addEventListener('click', async () => {
-                fillBtn.disabled = true;
-                fillBtn.textContent = '⏳...';
-                try {
-                    const before = window.wmCollectionCache.cards.length;
-                    await getVisibleCollectionCards(txt => logToPanel(txt));
-                    const after = window.wmCollectionCache.cards.length;
-                    logToPanel(`📥 ${after - before} cartes ajoutées au cache (total: ${after})`);
-                    if (typeof renderCacheInfo === 'function') renderCacheInfo();
-                } catch (e) {
-                    logToPanel(`❌ ${e.message}`);
-                } finally {
-                    fillBtn.disabled = false;
-                    fillBtn.textContent = '📥 Remplir la page';
-                }
-            });
+        function bindCacheFillBtn() {
+            const fillBtn = document.getElementById('wm-cache-fill-btn');
+            if (fillBtn && !fillBtn._wmBound) {
+                fillBtn._wmBound = true;
+                fillBtn.addEventListener('click', async () => {
+                    fillBtn.disabled = true;
+                    fillBtn.textContent = '⏳...';
+                    try {
+                        const before = window.wmCollectionCache.cards.length;
+                        await window.getVisibleCollectionCards(txt => window.logToPanel(txt));
+                        const after = window.wmCollectionCache.cards.length;
+                        window.logToPanel(`📥 ${after - before} cartes ajoutées au cache (total: ${after})`);
+                    } catch (e) {
+                        window.logToPanel(`❌ ${e.message}`);
+                    } finally {
+                        fillBtn.disabled = false;
+                        fillBtn.textContent = '📥 Remplir la page';
+                    }
+                });
+            }
         }
+        window.bindCacheFillBtn = bindCacheFillBtn;
+        bindCacheFillBtn();
         // ---> INJECTION DES BOUTONS GROUPES ET MODALE IMPORT/EXPORT <---
         const oldAddRuleBtn = document.getElementById('wm-add-rule-btn');
         if (oldAddRuleBtn) {
@@ -451,7 +456,7 @@
                 ta.value = JSON.stringify(exportData, null, 2);
                 ta.select();
                 document.execCommand('copy');
-                logToPanel("📤 Export copié dans le presse-papier !");
+                window.logToPanel("📤 Export copié dans le presse-papier !");
             });
 
             document.getElementById('wm-btn-ie-import').addEventListener('click', () => {
@@ -473,7 +478,7 @@
                     renderRulesList();
                     modal.style.display = 'none';
                     ta.value = '';
-                    logToPanel("📥 Groupes importés avec succès ! Pensez à réassigner vos étiquettes.");
+                    window.logToPanel("📥 Groupes importés avec succès ! Pensez à réassigner vos étiquettes.");
                 } catch(e) { alert("Erreur d'importation : Le code fourni est invalide."); }
             });
         }
@@ -498,9 +503,9 @@
                     nameEl.value = '';
                     renderTagsList();
                     renderRulesList(); // pour rafraîchir les dropdowns
-                    logToPanel(`🏷️ Étiquette "${name}" créée`);
+                    window.logToPanel(`🏷️ Étiquette "${name}" créée`);
                 } catch(e) {
-                    logToPanel(`❌ Erreur création tag: ${e.message}`);
+                    window.logToPanel(`❌ Erreur création tag: ${e.message}`);
                 }
             });
         }
@@ -524,7 +529,7 @@
                 const st = window.wmTagScanState;
                 if (st.running) {
                     st.cancelled = true;
-                    logToPanel('⏹️ Annulation demandée...');
+                    window.logToPanel('⏹️ Annulation demandée...');
                 }
             });
         }
@@ -538,7 +543,7 @@
                 st.paused = !st.paused;
                 pauseBtn.textContent = st.paused ? '▶️ Reprendre' : '⏸️ Pause';
                 renderScanProgress();
-                logToPanel(st.paused ? '⏸️ Scan mis en pause' : '▶️ Scan repris');
+                window.logToPanel(st.paused ? '⏸️ Scan mis en pause' : '▶️ Scan repris');
             });
         }
 
@@ -563,6 +568,8 @@
                 modeHint.innerHTML = 'Mode complet : parcourt toute la collection (long).<br>Mode page : traite uniquement les cartes affichées.';
             }
         }
+        window.updateModeHint = updateModeHint;
+        window.WikiM.updateModeHint = updateModeHint;
     }
 
     function restoreScanUI() {
@@ -670,9 +677,9 @@
                     await wmDeleteTag(tagId);
                     renderTagsList();
                     renderRulesList();
-                    logToPanel(`🗑️ Étiquette supprimée`);
+                    window.logToPanel(`🗑️ Étiquette supprimée`);
                 } catch(e) {
-                    logToPanel(`❌ Erreur suppression: ${e.message}`);
+                    window.logToPanel(`❌ Erreur suppression: ${e.message}`);
                 }
             });
         });
@@ -1020,7 +1027,7 @@
                 rules: (g.rules || []).map(r => ({ ...r, tagId: '' }))
             }];
             navigator.clipboard.writeText(JSON.stringify(exportData, null, 2)).then(() => {
-                logToPanel("📤 Dossier copié dans le presse-papier !");
+                window.logToPanel("📤 Dossier copié dans le presse-papier !");
                 const btn = document.getElementById('wm-btn-export-single');
                 btn.textContent = "✅ Copié !";
                 setTimeout(() => btn.textContent = "📤 Exporter uniquement ce dossier", 2000);
@@ -1053,7 +1060,7 @@
 
         const rules = getFlatRules();
         if (rules.length === 0) {
-            logToPanel('❌ Aucune règle active.');
+            window.logToPanel('❌ Aucune règle active.');
             return;
         }
 
@@ -1082,7 +1089,7 @@
         cancelBtn.style.display = 'block';
         pauseBtn.textContent = '⏸️ Pause';
 
-        logToPanel(`🔍 Prévisualisation (mode ${mode === 'page' ? 'page actuelle' : 'complet'})...`);
+        window.logToPanel(`🔍 Prévisualisation (mode ${mode === 'page' ? 'page actuelle' : 'complet'})...`);
 
         try {
             // ============ PHASE 1 : récupération des cartes ============
@@ -1094,25 +1101,25 @@
                 st.phase = 'loading-collection';
                 st.progress.text = 'Lecture du DOM...';
                 renderScanProgress();
-                cards = await getVisibleCollectionCards(txt => {
+                cards = await window.getVisibleCollectionCards(txt => {
                     st.progress.text = txt;
                     renderScanProgress();
                 });
                 if (cards.length === 0) {
-                    logToPanel('❌ Aucune carte visible sur la page.');
+                    window.logToPanel('❌ Aucune carte visible sur la page.');
                     st.running = false;
                     restoreScanUI();
                     return;
                 }
-                logToPanel(`📄 ${cards.length} cartes visibles`);
+                window.logToPanel(`📄 ${cards.length} cartes visibles`);
             } else {
-                wmScanState.cancelled = false;
-                cards = await fetchAllCollectionCards(txt => {
+                window.wmScanState.cancelled = false;
+                cards = await window.fetchAllCollectionCards(txt => {
                     st.progress.text = txt;
                     renderScanProgress();
                 });
                 if (st.cancelled) throw new Error('cancelled');
-                logToPanel(`📦 ${cards.length} cartes récupérées`);
+                window.logToPanel(`📦 ${cards.length} cartes récupérées`);
             }
 
             if (!(await waitIfPaused())) throw new Error('cancelled');
@@ -1128,7 +1135,7 @@
 
             for (let i = 0; i < cards.length; i++) {
                 const card = cards[i];
-                const desired = evaluateAllRules(card, rules, window.wmPrices);
+                const desired = window.evaluateAllRules(card, rules, window.wmPrices);
                 desiredTagsByCard.set(card.userCardId || card.id || card.title, desired);
                 if (desired.size > 0) cardsWithDesired.push(card);
 
@@ -1169,7 +1176,7 @@
 
                 let existingTags;
                 try {
-                    existingTags = await withRetry(
+                    existingTags = await window.withRetry(
                         () => wmFetchUserCardTags(card.userCardId),
                         { label: `tags "${card.title.slice(0, 20)}"`, retries: 2, baseDelay: 1200, maxDelay: 4000 }
                     );
@@ -1195,21 +1202,21 @@
             st.phase = 'idle';
 
             renderPreviewResult({ toAdd, toRemove });
-            if (fetchErrors > 0) logToPanel(`⚠️ ${fetchErrors} erreurs réseau`);
-            if (skippedNoUserCard > 0) logToPanel(`⏭️ ${skippedNoUserCard} cartes ignorées (userCardId manquant)`);
+            if (fetchErrors > 0) window.logToPanel(`⚠️ ${fetchErrors} erreurs réseau`);
+            if (skippedNoUserCard > 0) window.logToPanel(`⏭️ ${skippedNoUserCard} cartes ignorées (userCardId manquant)`);
 
             applyBtn.disabled = (toAdd.length + toRemove.length) === 0;
-            logToPanel(`✅ Prévisualisation : +${toAdd.length} / -${toRemove.length}`);
+            window.logToPanel(`✅ Prévisualisation : +${toAdd.length} / -${toRemove.length}`);
 
         } catch (e) {
             st.running = false;
             st.phase = 'idle';
             if (e.message === 'cancelled') {
                 summary.textContent = '⏹️ Annulé.';
-                logToPanel('⏹️ Prévisualisation annulée');
+                window.logToPanel('⏹️ Prévisualisation annulée');
             } else {
                 summary.textContent = '❌ Erreur : ' + e.message;
-                logToPanel(`❌ Erreur : ${e.message}`);
+                window.logToPanel(`❌ Erreur : ${e.message}`);
             }
         } finally {
             st.running = false;
@@ -1243,7 +1250,7 @@
         pauseBtn.textContent = '⏸️ Pause';
         cancelBtn.style.display = 'block';
 
-        logToPanel(`🚀 Application : +${toAdd.length} / -${toRemove.length}`);
+        window.logToPanel(`🚀 Application : +${toAdd.length} / -${toRemove.length}`);
 
         let done = 0, failed = 0;
         let consecutiveErrors = 0;
@@ -1264,7 +1271,7 @@
 
                 let r;
                 try {
-                    r = await withRetry(() => wmApplyTag(card.userCardId, tagId), {
+                    r = await window.withRetry(() => wmApplyTag(card.userCardId, tagId), {
                         label: `apply "${card.title.slice(0,20)}"`, retries: 3, baseDelay: 1000, maxDelay: 6000
                     });
                 } catch (e) { r = { ok: false, error: e.message }; }
@@ -1274,7 +1281,7 @@
                     failed++; consecutiveErrors++;
                     console.warn('[WM-Tags] apply fail:', card.title, r.error);
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                        logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs consécutives, arrêt`);
+                        window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs consécutives, arrêt`);
                         break;
                     }
                 }
@@ -1291,7 +1298,7 @@
 
                     let r;
                     try {
-                        r = await withRetry(() => wmRemoveTag(card.userCardId, tagId), {
+                        r = await window.withRetry(() => wmRemoveTag(card.userCardId, tagId), {
                             label: `remove "${card.title.slice(0,20)}"`, retries: 3, baseDelay: 1000, maxDelay: 6000
                         });
                     } catch (e) { r = { ok: false, error: e.message }; }
@@ -1300,7 +1307,7 @@
                     else {
                         failed++; consecutiveErrors++;
                         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                            logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs, arrêt`);
+                            window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs, arrêt`);
                             break;
                         }
                     }
@@ -1311,8 +1318,8 @@
 
             const msg = `✅ Terminé : ${done} opérations, ${failed} erreurs`;
             summary.innerHTML = `<div>${msg}</div>`;
-            logToPanel(msg);
-            showWMToast(msg, failed === 0);
+            window.logToPanel(msg);
+            window.showWMToast(msg, failed === 0);
 
         } finally {
             st.running = false;
@@ -1331,30 +1338,28 @@
     window.WM_RULE_OPERATORS = WM_RULE_OPERATORS;
 
     // --- Cross-module exports ---
-    if (typeof processAutoTags !== 'undefined') { window.processAutoTags = processAutoTags; window.WikiM.processAutoTags = processAutoTags; }
-    if (typeof wmFetchTags !== 'undefined') { window.wmFetchTags = wmFetchTags; window.WikiM.wmFetchTags = wmFetchTags; }
-    if (typeof wmCreateTag !== 'undefined') { window.wmCreateTag = wmCreateTag; window.WikiM.wmCreateTag = wmCreateTag; }
-    if (typeof wmDeleteTag !== 'undefined') { window.wmDeleteTag = wmDeleteTag; window.WikiM.wmDeleteTag = wmDeleteTag; }
-    if (typeof wmFetchUserCardTags !== 'undefined') { window.wmFetchUserCardTags = wmFetchUserCardTags; window.WikiM.wmFetchUserCardTags = wmFetchUserCardTags; }
-    if (typeof wmApplyTag !== 'undefined') { window.wmApplyTag = wmApplyTag; window.WikiM.wmApplyTag = wmApplyTag; }
-    if (typeof wmRemoveTag !== 'undefined') { window.wmRemoveTag = wmRemoveTag; window.WikiM.wmRemoveTag = wmRemoveTag; }
-    if (typeof getTagGroups !== 'undefined') { window.getTagGroups = getTagGroups; window.WikiM.getTagGroups = getTagGroups; }
-    if (typeof saveTagGroups !== 'undefined') { window.saveTagGroups = saveTagGroups; window.WikiM.saveTagGroups = saveTagGroups; }
-    if (typeof getFlatRules !== 'undefined') { window.getFlatRules = getFlatRules; window.WikiM.getFlatRules = getFlatRules; }
-    if (typeof initTagGroupsUI !== 'undefined') { window.initTagGroupsUI = initTagGroupsUI; window.WikiM.initTagGroupsUI = initTagGroupsUI; }
-    if (typeof renderTagGroups !== 'undefined') { window.renderTagGroups = renderTagGroups; window.WikiM.renderTagGroups = renderTagGroups; }
-    if (typeof initTagsTab !== 'undefined') { window.initTagsTab = initTagsTab; window.WikiM.initTagsTab = initTagsTab; }
-    if (typeof bindTagButtons !== 'undefined') { window.bindTagButtons = bindTagButtons; window.WikiM.bindTagButtons = bindTagButtons; }
-    if (typeof updateModeHint !== 'undefined') { window.updateModeHint = updateModeHint; window.WikiM.updateModeHint = updateModeHint; }
-    if (typeof restoreScanUI !== 'undefined') { window.restoreScanUI = restoreScanUI; window.WikiM.restoreScanUI = restoreScanUI; }
-    if (typeof renderScanProgress !== 'undefined') { window.renderScanProgress = renderScanProgress; window.WikiM.renderScanProgress = renderScanProgress; }
-    if (typeof renderPreviewResult !== 'undefined') { window.renderPreviewResult = renderPreviewResult; window.WikiM.renderPreviewResult = renderPreviewResult; }
-    if (typeof waitIfPaused !== 'undefined') { window.waitIfPaused = waitIfPaused; window.WikiM.waitIfPaused = waitIfPaused; }
-    if (typeof renderTagsList !== 'undefined') { window.renderTagsList = renderTagsList; window.WikiM.renderTagsList = renderTagsList; }
-    if (typeof renderRulesList !== 'undefined') { window.renderRulesList = renderRulesList; window.WikiM.renderRulesList = renderRulesList; }
-    if (typeof bindRuleListeners !== 'undefined') { window.bindRuleListeners = bindRuleListeners; window.WikiM.bindRuleListeners = bindRuleListeners; }
-    if (typeof openGroupEditModal !== 'undefined') { window.openGroupEditModal = openGroupEditModal; window.WikiM.openGroupEditModal = openGroupEditModal; }
-    if (typeof escapeHtml !== 'undefined') { window.escapeHtml = escapeHtml; window.WikiM.escapeHtml = escapeHtml; }
-    if (typeof runTagPreview !== 'undefined') { window.runTagPreview = runTagPreview; window.WikiM.runTagPreview = runTagPreview; }
-    if (typeof runTagApply !== 'undefined') { window.runTagApply = runTagApply; window.WikiM.runTagApply = runTagApply; }
+    window.processAutoTags = WikiM.processAutoTags = processAutoTags;
+    window.wmFetchTags = WikiM.wmFetchTags = wmFetchTags;
+    window.wmCreateTag = WikiM.wmCreateTag = wmCreateTag;
+    window.wmDeleteTag = WikiM.wmDeleteTag = wmDeleteTag;
+    window.wmFetchUserCardTags = WikiM.wmFetchUserCardTags = wmFetchUserCardTags;
+    window.wmApplyTag = WikiM.wmApplyTag = wmApplyTag;
+    window.wmRemoveTag = WikiM.wmRemoveTag = wmRemoveTag;
+    window.getTagGroups = WikiM.getTagGroups = getTagGroups;
+    window.saveTagGroups = WikiM.saveTagGroups = saveTagGroups;
+    window.getFlatRules = WikiM.getFlatRules = getFlatRules;
+    window.initTagGroupsUI = WikiM.initTagGroupsUI = initTagGroupsUI;
+    window.initTagsTab = WikiM.initTagsTab = initTagsTab;
+    window.bindTagButtons = WikiM.bindTagButtons = bindTagButtons;
+    window.restoreScanUI = WikiM.restoreScanUI = restoreScanUI;
+    window.renderScanProgress = WikiM.renderScanProgress = renderScanProgress;
+    window.renderPreviewResult = WikiM.renderPreviewResult = renderPreviewResult;
+    window.waitIfPaused = WikiM.waitIfPaused = waitIfPaused;
+    window.renderTagsList = WikiM.renderTagsList = renderTagsList;
+    window.renderRulesList = WikiM.renderRulesList = renderRulesList;
+    window.bindRuleListeners = WikiM.bindRuleListeners = bindRuleListeners;
+    window.openGroupEditModal = WikiM.openGroupEditModal = openGroupEditModal;
+    window.escapeHtml = WikiM.escapeHtml = escapeHtml;
+    window.runTagPreview = WikiM.runTagPreview = runTagPreview;
+    window.runTagApply = WikiM.runTagApply = runTagApply;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

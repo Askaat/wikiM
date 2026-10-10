@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Keyboard Shortcuts
 // ============================================================
 (function(W, WikiM) {
@@ -74,7 +74,7 @@
         // ==========================================
         // 2. NAVIGATION DANS LA COLLECTION (Modal)
         // ==========================================
-        const modal = typeof getOpenCardModal === 'function' ? getOpenCardModal() : null;
+        const modal = typeof window.getOpenCardModal === 'function' ? window.getOpenCardModal() : null;
 
         if (modal) {
             // Si le modal est ouvert, on gère UNIQUEMENT la navigation inter-cartes
@@ -83,20 +83,42 @@
             e.preventDefault();
             e.stopPropagation();
 
-            if (typeof wmCurrentCardIndex !== 'undefined' && wmCurrentCardIndex === -1 && modal.title) {
-                const cards = typeof getCollectionCards === 'function' ? getCollectionCards() : [];
-                const idx = cards.findIndex(c => getCardTitleFromEl(c) === modal.title);
-                if (idx !== -1) {
-                    wmCurrentCardIndex = idx;
-                    wmCurrentCardTitle = modal.title;
-                } else {
-                    return;
+            if (window._wmNavigating) return;
+
+            const cards = typeof window.getCollectionCards === 'function' ? window.getCollectionCards() : [];
+            if (!cards.length) return;
+
+            // 1. Si l'index mémorisé correspond déjà exactement à la carte ouverte, on le conserve
+            let currentIdx = -1;
+            if (typeof window.wmCurrentCardIndex === 'number' && window.wmCurrentCardIndex >= 0 && window.wmCurrentCardIndex < cards.length) {
+                const knownTitle = window.getCardTitleFromEl(cards[window.wmCurrentCardIndex]);
+                if (knownTitle && knownTitle === modal.title) {
+                    currentIdx = window.wmCurrentCardIndex;
                 }
             }
 
+            // 2. Sinon (ex: clic souris sur une autre carte), recherche par égalité STRICTE
+            if (currentIdx === -1 && modal.title) {
+                currentIdx = cards.findIndex(c => window.getCardTitleFromEl(c) === modal.title);
+            }
+
+            // 3. Fallbacks de sécurité
+            if (currentIdx === -1 && typeof window.wmCurrentCardIndex === 'number' && window.wmCurrentCardIndex >= 0) {
+                currentIdx = window.wmCurrentCardIndex;
+            }
+            if (currentIdx === -1) {
+                currentIdx = 0;
+            }
+
+            window.wmCurrentCardIndex = currentIdx;
+            window.wmCurrentCardTitle = modal.title;
+
             const delta = e.key === 'ArrowRight' ? 1 : -1;
-            if (typeof navigateToCardIndex === 'function') {
-                navigateToCardIndex(wmCurrentCardIndex + delta);
+            const targetIdx = currentIdx + delta;
+            console.log(`[WM-Nav] ⌨️ Touche ${e.key} | Carte: "${modal.title}" (index ${currentIdx}/${cards.length - 1}) -> Vers index: ${targetIdx}`);
+
+            if (typeof window.navigateToCardIndex === 'function') {
+                window.navigateToCardIndex(targetIdx);
             }
             return; // On s'arrête ici pour bloquer la suite
         }

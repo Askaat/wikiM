@@ -1,4 +1,4 @@
-# Mini serveur web de développement local pour WikiM
+# Mini serveur web de developpement local pour WikiM
 $port = 8080
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$port/")
@@ -7,16 +7,16 @@ $listener.Prefixes.Add("http://127.0.0.1:$port/")
 try {
     $listener.Start()
 } catch {
-    Write-Host "Erreur au démarrage du serveur : $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Assurez-vous que le port $port n'est pas déjà utilisé." -ForegroundColor Yellow
+    Write-Host "Erreur au demarrage du serveur : $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Assurez-vous que le port $port n'est pas deja utilise." -ForegroundColor Yellow
     pause
     exit
 }
 
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host "   Serveur de développement WikiM démarré avec succès !" -ForegroundColor Green
+Write-Host "   Serveur de developpement WikiM demarre avec succes !" -ForegroundColor Green
 Write-Host "   URL locale : http://localhost:$port/" -ForegroundColor Cyan
-Write-Host "   Appuyez sur Ctrl+C ou fermez cette fenêtre pour arrêter." -ForegroundColor Gray
+Write-Host "   Appuyez sur Ctrl+C ou fermez cette fenetre pour arreter." -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Green
 
 $rootDir = $PSScriptRoot
@@ -27,7 +27,7 @@ while ($listener.IsListening) {
         $request = $context.Request
         $response = $context.Response
 
-        # En-têtes CORS pour Tampermonkey et le navigateur
+        # En-tetes CORS pour Tampermonkey et le navigateur
         $response.Headers.Add("Access-Control-Allow-Origin", "*")
         $response.Headers.Add("Access-Control-Allow-Methods", "GET, OPTIONS")
         $response.Headers.Add("Access-Control-Allow-Headers", "*")
@@ -39,7 +39,7 @@ while ($listener.IsListening) {
             continue
         }
 
-        # Nettoyage du chemin demandé
+        # Nettoyage du chemin demande
         $urlPath = $request.Url.LocalPath.TrimStart('/')
         if ([string]::IsNullOrEmpty($urlPath)) { $urlPath = "Tamper.user.js" }
         $filePath = Join-Path $rootDir ($urlPath -replace '/', '\')
@@ -56,15 +56,15 @@ while ($listener.IsListening) {
             $response.ContentLength64 = $bytes.Length
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
             $response.StatusCode = 200
-            Write-Host "✓ [200] $urlPath" -ForegroundColor DarkGray
+            Write-Host "[200] $urlPath" -ForegroundColor DarkGray
         } else {
             $response.StatusCode = 404
-            $msg = [System.Text.Encoding]::UTF8.GetBytes("Fichier non trouvé : $urlPath")
+            $msg = [System.Text.Encoding]::UTF8.GetBytes("Fichier non trouve : $urlPath")
             $response.OutputStream.Write($msg, 0, $msg.Length)
-            Write-Host "✗ [404] $urlPath" -ForegroundColor Red
+            Write-Host "[404] $urlPath" -ForegroundColor Red
         }
         $response.Close()
     } catch {
-        # Contexte fermé ou erreur ponctuelle
+        # Contexte ferme ou interruption
     }
 }

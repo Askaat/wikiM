@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Sniper & Auction Reminders
 // ============================================================
 (function(W, WikiM) {
@@ -171,7 +171,7 @@
             rt.lastCheckAt = 0;
             rt.lastStatus = e.target.checked ? 'waiting' : 'idle';
             updateSniperStatusUI();
-            logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${auctionId.slice(0, 8)}`);
+            window.logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${auctionId.slice(0, 8)}`);
             renderTrackedAuctions();
         });
         document.getElementById('wm-sniper-max').addEventListener('change', e => {
@@ -180,7 +180,7 @@
             setSniperConfigFor(auctionId, { maxBid: v });
             const rt = getSniperRuntime(auctionId);
             rt.lastCheckAt = 0;
-            logToPanel(`🎯 Mise max : ${v} WB`);
+            window.logToPanel(`🎯 Mise max : ${v} WB`);
             renderTrackedAuctions();
         });
         document.getElementById('wm-sniper-trigger').addEventListener('change', e => {
@@ -189,7 +189,7 @@
             setSniperConfigFor(auctionId, { trigger: v });
             const rt = getSniperRuntime(auctionId);
             rt.lastCheckAt = 0;
-            logToPanel(`🎯 Trigger : ${v}s`);
+            window.logToPanel(`🎯 Trigger : ${v}s`);
             renderTrackedAuctions();
         });
         document.getElementById('wm-sniper-step').addEventListener('change', e => {
@@ -198,7 +198,7 @@
             setSniperConfigFor(auctionId, { step: v });
             const rt = getSniperRuntime(auctionId);
             rt.lastCheckAt = 0;
-            logToPanel(`🎯 Pas : ${v}s`);
+            window.logToPanel(`🎯 Pas : ${v}s`);
             renderTrackedAuctions();
         });
 
@@ -346,7 +346,7 @@
         if (minBid > cfg.maxBid) {
             rt.lastStatus = 'max_reached';
             updateSniperStatusUI();
-            logToPanel(`🎯 Sniper STOP : mise min ${minBid} > max ${cfg.maxBid}`);
+            window.logToPanel(`🎯 Sniper STOP : mise min ${minBid} > max ${cfg.maxBid}`);
             return;
         }
 
@@ -355,7 +355,7 @@
         rt.inFlight = true;
         rt.lastStatus = 'bidding';
         updateSniperStatusUI();
-        logToPanel(`🎯 SNIPE à ${secondsLeft}s : mise ${minBid} WB`);
+        window.logToPanel(`🎯 SNIPE à ${secondsLeft}s : mise ${minBid} WB`);
 
         const result = await placeBid(auctionId, minBid);
         rt.inFlight = false;
@@ -363,9 +363,9 @@
         if (result.ok) {
             rt.lastBidAt = Date.now();
             rt.bidCount++;
-            logToPanel(`✅ Mise acceptée : ${minBid} WB (total: ${rt.bidCount})`);
+            window.logToPanel(`✅ Mise acceptée : ${minBid} WB (total: ${rt.bidCount})`);
             if (result.data && typeof result.data.bidder_balance === 'number') {
-                recordBalance(result.data.bidder_balance, 'bid');
+                window.recordBalance(result.data.bidder_balance, 'bid');
             }
             rt.lastStatus = 'watching';
 
@@ -377,7 +377,7 @@
             }, 500);
 
         } else {
-            logToPanel(`❌ Mise refusée : ${result.error}`);
+            window.logToPanel(`❌ Mise refusée : ${result.error}`);
             rt.lastStatus = 'error';
         }
         updateSniperStatusUI();
@@ -419,7 +419,7 @@
         const reminders = getReminders();
         reminders[auctionId] = { auctionId, cardTitle, endAt, triggerBefore, channels, createdAt: Date.now(), fired: false };
         saveReminders(reminders);
-        logToPanel(`🔔 Rappel ajouté : "${cardTitle}" à ${triggerBefore}s de la fin.`);
+        window.logToPanel(`🔔 Rappel ajouté : "${cardTitle}" à ${triggerBefore}s de la fin.`);
         renderTrackedAuctions();
         updateTrackBadge();
     }
@@ -472,21 +472,21 @@
         } catch(e) { return null; }
     }
 
-    let lastTrackBtnAuctionId = null;
+    window.lastTrackBtnAuctionId = window.lastTrackBtnAuctionId ?? null;
     function ensureTrackButton() {
         const auctionId = getAuctionIdFromUrl();
         const existingBtn = document.getElementById('wm-track-btn');
 
         if (!auctionId) {
             if (existingBtn) existingBtn.remove();
-            lastTrackBtnAuctionId = null;
+            window.lastTrackBtnAuctionId = null;
             return;
         }
 
-        if (existingBtn && lastTrackBtnAuctionId === auctionId) return;
+        if (existingBtn && window.lastTrackBtnAuctionId === auctionId) return;
 
         if (existingBtn) existingBtn.remove();
-        lastTrackBtnAuctionId = auctionId;
+        window.lastTrackBtnAuctionId = auctionId;
 
         const reminders = getReminders();
         const isTracked = !!reminders[auctionId];
@@ -507,7 +507,7 @@
                 // Fetch uniquement au moment de l'action
                 const auction = await fetchAuctionDetails(auctionId);
                 if (!auction) {
-                    logToPanel('❌ Impossible de récupérer les détails de l\'enchère');
+                    window.logToPanel('❌ Impossible de récupérer les détails de l\'enchère');
                     return;
                 }
                 openTrackModal(auction);
@@ -583,7 +583,7 @@
                     <div class="wm-tracked-header">
                         <span class="wm-tracked-title" title="${rem.cardTitle}">${rem.cardTitle}</span>
                         <span class="wm-tracked-timer ${urgent ? 'urgent' : ''}" data-end="${rem.endAt}" data-id="${rem.auctionId}">
-                            ${expired ? 'Terminée' : formatSec(secondsLeft)}
+                            ${expired ? 'Terminée' : window.formatSec(secondsLeft)}
                         </span>
                     </div>
                     <div class="wm-tracked-info">
@@ -621,7 +621,7 @@
                          setSniperConfigFor(id, { enabled: false });
                     }
 
-                    logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${id.slice(0, 8)}`);
+                    window.logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${id.slice(0, 8)}`);
                     const currentAuctionId = getAuctionIdFromUrl();
                     if (currentAuctionId === id) syncSniperPanelFromConfig();
                 });
@@ -684,7 +684,7 @@
             const trigger = Math.max(1, parseInt(document.getElementById('wm-sniper-edit-trigger').value, 10) || 1);
             const step = Math.max(1, parseInt(document.getElementById('wm-sniper-edit-step').value, 10) || 1);
             setSniperConfigFor(auctionId, { maxBid, trigger, step });
-            logToPanel(`🎯 Config sniper mise à jour : max ${maxBid} WB, trigger ${trigger}s, pas ${step}s`);
+            window.logToPanel(`🎯 Config sniper mise à jour : max ${maxBid} WB, trigger ${trigger}s, pas ${step}s`);
             const rt = getSniperRuntime(auctionId);
             rt.lastCheckAt = 0;
             const currentAuctionId = getAuctionIdFromUrl();
@@ -699,7 +699,7 @@
             const endAt = el.dataset.end;
             if (!endAt) return;
             const s = Math.floor((new Date(endAt).getTime() - Date.now()) / 1000);
-            el.textContent = s > 0 ? formatSec(s) : 'Terminée';
+            el.textContent = s > 0 ? window.formatSec(s) : 'Terminée';
         });
     }, 1000);
 
@@ -715,17 +715,17 @@
                 const prefs = getPrefs();
                 const ch = rem.channels || { browser: prefs.browser, toast: prefs.toast, sound: prefs.sound };
                 const title = `Fin imminente — ${rem.cardTitle}`;
-                const body = `Se termine dans ${formatSec(secondsLeft)}`;
+                const body = `Se termine dans ${window.formatSec(secondsLeft)}`;
                 if (ch.browser && Notification.permission === 'granted') {
                     try {
                         const n = new Notification(title, { body, icon: 'https://www.wiki-masters.com/icon-192.png', tag: 'wm-auction-' + id });
                         n.onclick = () => { window.focus(); window.location.href = `/marketplace/${id}`; n.close(); };
                     } catch(e) {}
                 }
-                if (ch.toast) showToast({ title: 'Fin imminente', body: `"${rem.cardTitle}" arrive à échéance.`, auctionId: id, urgent: secondsLeft < 30, secondsLeft });
-                if (ch.sound) playBeep();
+                if (ch.toast) window.showToast({ title: 'Fin imminente', body: `"${rem.cardTitle}" arrive à échéance.`, auctionId: id, urgent: secondsLeft < 30, secondsLeft });
+                if (ch.sound) window.playBeep();
                 rem.fired = true; changed = true;
-                logToPanel(`🔔 Rappel déclenché : ${rem.cardTitle} (${secondsLeft}s)`);
+                window.logToPanel(`🔔 Rappel déclenché : ${rem.cardTitle} (${secondsLeft}s)`);
             }
             if (secondsLeft < -300) {
                 delete reminders[id]; changed = true;
@@ -741,31 +741,31 @@
 
 
     // --- Cross-module exports ---
-    if (typeof getAllSniperConfigs !== 'undefined') { window.getAllSniperConfigs = getAllSniperConfigs; window.WikiM.getAllSniperConfigs = getAllSniperConfigs; }
-    if (typeof saveAllSniperConfigs !== 'undefined') { window.saveAllSniperConfigs = saveAllSniperConfigs; window.WikiM.saveAllSniperConfigs = saveAllSniperConfigs; }
-    if (typeof getSniperConfigFor !== 'undefined') { window.getSniperConfigFor = getSniperConfigFor; window.WikiM.getSniperConfigFor = getSniperConfigFor; }
-    if (typeof setSniperConfigFor !== 'undefined') { window.setSniperConfigFor = setSniperConfigFor; window.WikiM.setSniperConfigFor = setSniperConfigFor; }
-    if (typeof getSniperRuntime !== 'undefined') { window.getSniperRuntime = getSniperRuntime; window.WikiM.getSniperRuntime = getSniperRuntime; }
-    if (typeof getMinBid !== 'undefined') { window.getMinBid = getMinBid; window.WikiM.getMinBid = getMinBid; }
-    if (typeof placeBid !== 'undefined') { window.placeBid = placeBid; window.WikiM.placeBid = placeBid; }
-    if (typeof injectSniperPanel !== 'undefined') { window.injectSniperPanel = injectSniperPanel; window.WikiM.injectSniperPanel = injectSniperPanel; }
-    if (typeof syncSniperPanelFromConfig !== 'undefined') { window.syncSniperPanelFromConfig = syncSniperPanelFromConfig; window.WikiM.syncSniperPanelFromConfig = syncSniperPanelFromConfig; }
-    if (typeof updateSniperStatusUI !== 'undefined') { window.updateSniperStatusUI = updateSniperStatusUI; window.WikiM.updateSniperStatusUI = updateSniperStatusUI; }
-    if (typeof getPrefs !== 'undefined') { window.getPrefs = getPrefs; window.WikiM.getPrefs = getPrefs; }
-    if (typeof savePrefs !== 'undefined') { window.savePrefs = savePrefs; window.WikiM.savePrefs = savePrefs; }
-    if (typeof getReminders !== 'undefined') { window.getReminders = getReminders; window.WikiM.getReminders = getReminders; }
-    if (typeof saveReminders !== 'undefined') { window.saveReminders = saveReminders; window.WikiM.saveReminders = saveReminders; }
-    if (typeof getBulkList !== 'undefined') { window.getBulkList = getBulkList; window.WikiM.getBulkList = getBulkList; }
-    if (typeof saveBulkList !== 'undefined') { window.saveBulkList = saveBulkList; window.WikiM.saveBulkList = saveBulkList; }
-    if (typeof getMenuPosition !== 'undefined') { window.getMenuPosition = getMenuPosition; window.WikiM.getMenuPosition = getMenuPosition; }
-    if (typeof saveMenuPosition !== 'undefined') { window.saveMenuPosition = saveMenuPosition; window.WikiM.saveMenuPosition = saveMenuPosition; }
-    if (typeof addReminder !== 'undefined') { window.addReminder = addReminder; window.WikiM.addReminder = addReminder; }
-    if (typeof removeReminder !== 'undefined') { window.removeReminder = removeReminder; window.WikiM.removeReminder = removeReminder; }
-    if (typeof updateTrackBadge !== 'undefined') { window.updateTrackBadge = updateTrackBadge; window.WikiM.updateTrackBadge = updateTrackBadge; }
-    if (typeof getAuctionIdFromUrl !== 'undefined') { window.getAuctionIdFromUrl = getAuctionIdFromUrl; window.WikiM.getAuctionIdFromUrl = getAuctionIdFromUrl; }
-    if (typeof fetchAuctionDetails !== 'undefined') { window.fetchAuctionDetails = fetchAuctionDetails; window.WikiM.fetchAuctionDetails = fetchAuctionDetails; }
-    if (typeof ensureTrackButton !== 'undefined') { window.ensureTrackButton = ensureTrackButton; window.WikiM.ensureTrackButton = ensureTrackButton; }
-    if (typeof openTrackModal !== 'undefined') { window.openTrackModal = openTrackModal; window.WikiM.openTrackModal = openTrackModal; }
-    if (typeof renderTrackedAuctions !== 'undefined') { window.renderTrackedAuctions = renderTrackedAuctions; window.WikiM.renderTrackedAuctions = renderTrackedAuctions; }
-    if (typeof openSniperEditModal !== 'undefined') { window.openSniperEditModal = openSniperEditModal; window.WikiM.openSniperEditModal = openSniperEditModal; }
+    window.getAllSniperConfigs = WikiM.getAllSniperConfigs = getAllSniperConfigs;
+    window.saveAllSniperConfigs = WikiM.saveAllSniperConfigs = saveAllSniperConfigs;
+    window.getSniperConfigFor = WikiM.getSniperConfigFor = getSniperConfigFor;
+    window.setSniperConfigFor = WikiM.setSniperConfigFor = setSniperConfigFor;
+    window.getSniperRuntime = WikiM.getSniperRuntime = getSniperRuntime;
+    window.getMinBid = WikiM.getMinBid = getMinBid;
+    window.placeBid = WikiM.placeBid = placeBid;
+    window.injectSniperPanel = WikiM.injectSniperPanel = injectSniperPanel;
+    window.syncSniperPanelFromConfig = WikiM.syncSniperPanelFromConfig = syncSniperPanelFromConfig;
+    window.updateSniperStatusUI = WikiM.updateSniperStatusUI = updateSniperStatusUI;
+    window.getPrefs = WikiM.getPrefs = getPrefs;
+    window.savePrefs = WikiM.savePrefs = savePrefs;
+    window.getReminders = WikiM.getReminders = getReminders;
+    window.saveReminders = WikiM.saveReminders = saveReminders;
+    window.getBulkList = WikiM.getBulkList = getBulkList;
+    window.saveBulkList = WikiM.saveBulkList = saveBulkList;
+    window.getMenuPosition = WikiM.getMenuPosition = getMenuPosition;
+    window.saveMenuPosition = WikiM.saveMenuPosition = saveMenuPosition;
+    window.addReminder = WikiM.addReminder = addReminder;
+    window.removeReminder = WikiM.removeReminder = removeReminder;
+    window.updateTrackBadge = WikiM.updateTrackBadge = updateTrackBadge;
+    window.getAuctionIdFromUrl = WikiM.getAuctionIdFromUrl = getAuctionIdFromUrl;
+    window.fetchAuctionDetails = WikiM.fetchAuctionDetails = fetchAuctionDetails;
+    window.ensureTrackButton = WikiM.ensureTrackButton = ensureTrackButton;
+    window.openTrackModal = WikiM.openTrackModal = openTrackModal;
+    window.renderTrackedAuctions = WikiM.renderTrackedAuctions = renderTrackedAuctions;
+    window.openSniperEditModal = WikiM.openSniperEditModal = openSniperEditModal;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

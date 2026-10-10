@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Utilities, Logger & Toasts
 // ============================================================
 (function(W, WikiM) {
@@ -66,7 +66,7 @@
     }
 
     function isTitleInBulkList(title) {
-        return getBulkList().some(item => (typeof item === 'string' ? item : item.title) === title);
+        return window.getBulkList().some(item => (typeof item === 'string' ? item : item.title) === title);
     }
 
     function updateAllBulkButtonsUI() {
@@ -85,20 +85,32 @@
 
     function updateBulkUI() {
         const container = document.getElementById('wm-bulk-list-container');
+        const titleEl = document.getElementById('wm-bulk-section-title');
         if (!container) return;
-        const list = getBulkList();
+
+        const list = window.getBulkList();
+        const validCount = list.filter(item => typeof item === 'object' && (item.user_card_id || item.userCardId)).length;
+
+        // Mise à jour du compteur dans le titre si présent
+        if (titleEl) {
+            titleEl.innerHTML = `Panier Bulk Delete <span style="color:#a5b4fc; margin-left:auto;">${validCount} / ${list.length} prêtes</span>`;
+        }
+
         if (list.length === 0) {
             container.innerHTML = '<div class="wm-bulk-empty">Panier vide.</div>';
         } else {
             container.innerHTML = list.map(item => {
                 const title = typeof item === 'string' ? item : item.title;
                 const hasUserCardId = typeof item === 'object' && (
-                    item.userCardId || (item.id && window.wmCardIdToUserCardId.has(item.id))
+                    item.user_card_id || item.userCardId || (item.id && window.wmCardIdToUserCardId.has(item.id))
                 );
                 const hasCardId = typeof item === 'object' && item.id;
                 const icon = hasUserCardId ? '✅' : (hasCardId ? '⏳' : '❓');
-                const tip = hasUserCardId ? 'Prêt (user_card_id connu)' : (hasCardId ? 'user_card_id à résoudre' : 'Aucun ID');
-                return `<div class="wm-bulk-item"><span title="${tip}">${icon} ${title}</span></div>`;
+                const tip = hasUserCardId ? 'Prêt (ID physique validé)' : (hasCardId ? 'user_card_id à résoudre' : 'En attente de résolution');
+                return `<div class="wm-bulk-item" title="${tip}">
+                            <span>${title}</span>
+                            <span>${icon}</span>
+                        </div>`;
             }).join('');
         }
     }
@@ -188,7 +200,7 @@
             const timerEl = toast.querySelector('.wm-toast-timer');
             const interval = setInterval(() => {
                 if (!document.body.contains(timerEl)) { clearInterval(interval); return; }
-                const rem = getReminders()[auctionId];
+                const rem = window.getReminders()[auctionId];
                 if (!rem) { clearInterval(interval); return; }
                 const s = Math.floor((new Date(rem.endAt).getTime() - Date.now()) / 1000);
                 timerEl.textContent = s > 0 ? formatSec(s) : 'Terminée';
@@ -230,15 +242,15 @@
 
 
     // --- Cross-module exports ---
-    if (typeof withRetry !== 'undefined') { window.withRetry = withRetry; window.WikiM.withRetry = withRetry; }
-    if (typeof logToPanel !== 'undefined') { window.logToPanel = logToPanel; window.WikiM.logToPanel = logToPanel; }
-    if (typeof isTitleInBulkList !== 'undefined') { window.isTitleInBulkList = isTitleInBulkList; window.WikiM.isTitleInBulkList = isTitleInBulkList; }
-    if (typeof updateAllBulkButtonsUI !== 'undefined') { window.updateAllBulkButtonsUI = updateAllBulkButtonsUI; window.WikiM.updateAllBulkButtonsUI = updateAllBulkButtonsUI; }
-    if (typeof updateBulkUI !== 'undefined') { window.updateBulkUI = updateBulkUI; window.WikiM.updateBulkUI = updateBulkUI; }
-    if (typeof showWMToast !== 'undefined') { window.showWMToast = showWMToast; window.WikiM.showWMToast = showWMToast; }
-    if (typeof playBeep !== 'undefined') { window.playBeep = playBeep; window.WikiM.playBeep = playBeep; }
-    if (typeof getToastContainer !== 'undefined') { window.getToastContainer = getToastContainer; window.WikiM.getToastContainer = getToastContainer; }
-    if (typeof showToast !== 'undefined') { window.showToast = showToast; window.WikiM.showToast = showToast; }
-    if (typeof formatSec !== 'undefined') { window.formatSec = formatSec; window.WikiM.formatSec = formatSec; }
-    if (typeof markCardAsProcessedByTitle !== 'undefined') { window.markCardAsProcessedByTitle = markCardAsProcessedByTitle; window.WikiM.markCardAsProcessedByTitle = markCardAsProcessedByTitle; }
+    window.withRetry = WikiM.withRetry = withRetry;
+    window.logToPanel = WikiM.logToPanel = logToPanel;
+    window.isTitleInBulkList = WikiM.isTitleInBulkList = isTitleInBulkList;
+    window.updateAllBulkButtonsUI = WikiM.updateAllBulkButtonsUI = updateAllBulkButtonsUI;
+    window.updateBulkUI = WikiM.updateBulkUI = updateBulkUI;
+    window.showWMToast = WikiM.showWMToast = showWMToast;
+    window.playBeep = WikiM.playBeep = playBeep;
+    window.getToastContainer = WikiM.getToastContainer = getToastContainer;
+    window.showToast = WikiM.showToast = showToast;
+    window.formatSec = WikiM.formatSec = formatSec;
+    window.markCardAsProcessedByTitle = WikiM.markCardAsProcessedByTitle = markCardAsProcessedByTitle;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

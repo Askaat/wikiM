@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Balance & Currency Tracking
 // ============================================================
 (function(W, WikiM) {
@@ -30,7 +30,7 @@
         renderBalanceUI();
         console.log(`[WM] Balance: ${newBalance} WB (delta: ${delta}, reason: ${reason})`);
         if (reason !== 'refresh' && reason !== 'startup' && Math.abs(delta) >= 100) {
-            logToPanel(`💰 Solde : ${delta > 0 ? '+' : ''}${delta} WB → ${newBalance} WB`);
+            window.logToPanel(`💰 Solde : ${delta > 0 ? '+' : ''}${delta} WB → ${newBalance} WB`);
         }
     }
 
@@ -39,7 +39,7 @@
             if (!W.wmAuth.token || !W.wmAuth.apikey) { resolve(null); return; }
             GM_xmlhttpRequest({
                 method: 'POST',
-                url: `https://${SUPABASE_REF}.supabase.co/rest/v1/rpc/get_my_profile`,
+                url: `https://${window.SUPABASE_REF}.supabase.co/rest/v1/rpc/get_my_profile`,
                 headers: {
                     'apikey': W.wmAuth.apikey,
                     'Authorization': `Bearer ${W.wmAuth.token}`,
@@ -48,7 +48,7 @@
                 data: '{}',
                 onload: res => {
                     try {
-                        if (res.status === 401) { extractTokenFromCookies(); resolve(null); return; }
+                        if (res.status === 401) { window.extractTokenFromCookies(); resolve(null); return; }
                         if (res.status !== 200) { resolve(null); return; }
                         const data = JSON.parse(res.responseText);
                         const balance = data?.wikibidous_balance;
@@ -175,9 +175,12 @@
                 const b = await fetchBalanceFromApi('manual');
                 refreshBtn.disabled = false;
                 refreshBtn.textContent = '🔄 Rafraîchir maintenant';
-                if (b === null) logToPanel('❌ Échec du rafraîchissement');
-                else logToPanel(`💰 Solde rafraîchi : ${b} WB`);
+                if (b === null) window.logToPanel('❌ Échec du rafraîchissement');
+                else window.logToPanel(`💰 Solde rafraîchi : ${b} WB`);
             });
+        }
+        if (typeof window.bindCacheFillBtn === 'function') {
+            window.bindCacheFillBtn();
         }
     }
 
@@ -185,11 +188,11 @@
     window.BALANCE_HISTORY_KEY = BALANCE_HISTORY_KEY;
 
     // --- Cross-module exports ---
-    if (typeof getBalanceHistory !== 'undefined') { window.getBalanceHistory = getBalanceHistory; window.WikiM.getBalanceHistory = getBalanceHistory; }
-    if (typeof saveBalanceHistory !== 'undefined') { window.saveBalanceHistory = saveBalanceHistory; window.WikiM.saveBalanceHistory = saveBalanceHistory; }
-    if (typeof recordBalance !== 'undefined') { window.recordBalance = recordBalance; window.WikiM.recordBalance = recordBalance; }
-    if (typeof fetchBalanceFromApi !== 'undefined') { window.fetchBalanceFromApi = fetchBalanceFromApi; window.WikiM.fetchBalanceFromApi = fetchBalanceFromApi; }
-    if (typeof getBalanceStats !== 'undefined') { window.getBalanceStats = getBalanceStats; window.WikiM.getBalanceStats = getBalanceStats; }
-    if (typeof renderBalanceSparkline !== 'undefined') { window.renderBalanceSparkline = renderBalanceSparkline; window.WikiM.renderBalanceSparkline = renderBalanceSparkline; }
-    if (typeof renderBalanceUI !== 'undefined') { window.renderBalanceUI = renderBalanceUI; window.WikiM.renderBalanceUI = renderBalanceUI; }
+    window.getBalanceHistory = WikiM.getBalanceHistory = getBalanceHistory;
+    window.saveBalanceHistory = WikiM.saveBalanceHistory = saveBalanceHistory;
+    window.recordBalance = WikiM.recordBalance = recordBalance;
+    window.fetchBalanceFromApi = WikiM.fetchBalanceFromApi = fetchBalanceFromApi;
+    window.getBalanceStats = WikiM.getBalanceStats = getBalanceStats;
+    window.renderBalanceSparkline = WikiM.renderBalanceSparkline = renderBalanceSparkline;
+    window.renderBalanceUI = WikiM.renderBalanceUI = renderBalanceUI;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Price Engine & Cache
 // ============================================================
 (function(W, WikiM) {
@@ -97,12 +97,11 @@
             if (!window.wmPrices[cardTitle] || window.wmPrices[cardTitle] === "ERROR") {
                 window.wmPrices[cardTitle] = "LOADING";
             }
-            renderPricesOnAllCards();
+            window.renderPricesOnAllCards();
         }
 
         try {
-            const fetcher = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-            const res = await fetcher(`https://www.wiki-masters.com/api/marketplace/cards/${uuid}/sales?scope=summary`, {
+            const res = await fetch(`https://www.wiki-masters.com/api/marketplace/cards/${uuid}/sales?scope=summary`, {
                 credentials: "include", method: "GET", headers: { "Accept": "application/json" }
             });
 
@@ -114,7 +113,7 @@
 
             wmSavePriceToCache(cardTitle, finalData);
             window.wmFetching.delete(uuid);
-            renderPricesOnAllCards();
+            window.renderPricesOnAllCards();
 
         } catch (e) {
             console.error(`[WM-Price] ⚠️ Échec prix pour ${cardTitle} (Essai ${attempt}/3):`, e.message);
@@ -126,7 +125,7 @@
                 console.error(`[WM-Price] ❌ Abandon pour ${cardTitle} après 3 essais.`);
                 window.wmPrices[cardTitle] = "ERROR";
                 window.wmFetching.delete(uuid);
-                renderPricesOnAllCards();
+                window.renderPricesOnAllCards();
             }
         }
     }
@@ -157,7 +156,7 @@
             // ⬇️ Retry automatique sur chaque page
             let data = null;
             try {
-                data = await withRetry(async () => {
+                data = await window.withRetry(async () => {
                     const r = await fetch(`/api/my-collection?sort=rarity&page=${page}&stats=0`, {
                         credentials: 'include',
                         headers: { 'Accept': '*/*' }
@@ -245,14 +244,14 @@
 
         const setProgress = (txt) => { if (progress) progress.textContent = txt; };
 
-        logToPanel('🔍 Démarrage du scan des prix...');
+        window.logToPanel('🔍 Démarrage du scan des prix...');
         setProgress('📥 Récupération de la collection...');
 
         let cards = [];
         try {
             cards = await fetchAllCollectionCards(txt => setProgress(txt));
         } catch (e) {
-            logToPanel('❌ Erreur lors de la récupération de la collection');
+            window.logToPanel('❌ Erreur lors de la récupération de la collection');
             setProgress('❌ Erreur');
             wmScanState.running = false;
             if (btn) { btn.disabled = false; btn.textContent = '🔍 Scanner toute la collection'; }
@@ -260,7 +259,7 @@
             return;
         }
 
-        logToPanel(`📦 ${cards.length} cartes dans la collection`);
+        window.logToPanel(`📦 ${cards.length} cartes dans la collection`);
         setProgress(`📦 ${cards.length} cartes — début du scan des prix...`);
 
         // Filtre : ne garde que celles qui ont besoin d'un fetch
@@ -274,7 +273,7 @@
             return true;
         });
 
-        logToPanel(`🎯 ${toFetch.length} cartes à mettre à jour (${cards.length - toFetch.length} déjà à jour)`);
+        window.logToPanel(`🎯 ${toFetch.length} cartes à mettre à jour (${cards.length - toFetch.length} déjà à jour)`);
 
         let done = 0;
         let failed = 0;
@@ -282,12 +281,12 @@
 
         for (const { id, title } of toFetch) {
             if (wmScanState.cancelled) {
-                logToPanel('⏹️ Scan annulé par l\'utilisateur');
+                window.logToPanel('⏹️ Scan annulé par l\'utilisateur');
                 break;
             }
 
             try {
-                await withRetry(() => fetchPricesBackground(id, title), {
+                await window.withRetry(() => fetchPricesBackground(id, title), {
                     label: `prix "${title.slice(0, 20)}"`,
                     retries: 2,
                     baseDelay: 1500,
@@ -305,9 +304,9 @@
 
         // Fin
         const msg = `✅ Scan terminé : ${done} prix mis à jour${failed > 0 ? `, ${failed} échecs` : ''}`;
-        logToPanel(msg);
+        window.logToPanel(msg);
         setProgress(msg);
-        showWMToast(msg, failed === 0);
+        window.showWMToast(msg, failed === 0);
 
         wmScanState.running = false;
         wmScanState.cancelled = false;
@@ -322,10 +321,10 @@
     window.wmScanState = wmScanState;
 
     // --- Cross-module exports ---
-    if (typeof wmLoadPriceCache !== 'undefined') { window.wmLoadPriceCache = wmLoadPriceCache; window.WikiM.wmLoadPriceCache = wmLoadPriceCache; }
-    if (typeof wmSavePriceToCache !== 'undefined') { window.wmSavePriceToCache = wmSavePriceToCache; window.WikiM.wmSavePriceToCache = wmSavePriceToCache; }
-    if (typeof wmGetPriceFor !== 'undefined') { window.wmGetPriceFor = wmGetPriceFor; window.WikiM.wmGetPriceFor = wmGetPriceFor; }
-    if (typeof fetchPricesBackground !== 'undefined') { window.fetchPricesBackground = fetchPricesBackground; window.WikiM.fetchPricesBackground = fetchPricesBackground; }
-    if (typeof fetchAllCollectionCards !== 'undefined') { window.fetchAllCollectionCards = fetchAllCollectionCards; window.WikiM.fetchAllCollectionCards = fetchAllCollectionCards; }
-    if (typeof runPriceScan !== 'undefined') { window.runPriceScan = runPriceScan; window.WikiM.runPriceScan = runPriceScan; }
+    window.wmLoadPriceCache = WikiM.wmLoadPriceCache = wmLoadPriceCache;
+    window.wmSavePriceToCache = WikiM.wmSavePriceToCache = wmSavePriceToCache;
+    window.wmGetPriceFor = WikiM.wmGetPriceFor = wmGetPriceFor;
+    window.fetchPricesBackground = WikiM.fetchPricesBackground = fetchPricesBackground;
+    window.fetchAllCollectionCards = WikiM.fetchAllCollectionCards = fetchAllCollectionCards;
+    window.runPriceScan = WikiM.runPriceScan = runPriceScan;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

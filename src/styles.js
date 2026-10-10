@@ -8,7 +8,14 @@
         const style = document.createElement('style');
         style.id = 'wm-custom-styles';
         style.textContent = css;
-        (document.head || document.documentElement).appendChild(style);
+        const target = document.head || document.documentElement;
+        if (target) {
+            target.appendChild(style);
+        } else {
+            document.addEventListener('DOMContentLoaded', () => {
+                (document.head || document.documentElement).appendChild(style);
+            });
+        }
         return style;
     };
 

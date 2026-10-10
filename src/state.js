@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: State & Constants
 // ============================================================
 (function(W, WikiM) {
@@ -11,6 +11,13 @@
     // ÉTAT GLOBAL
     // ============================================================
     const WM_PATCH_NOTES = [
+        {
+            version: "2.2.1",
+            date: "07/10/2026 - 13:00",
+            changes: [
+                "Ajout de la possibilité de voir les cartes de notre liste Bulk + Changement de la logique pour le bulk delete -> Bien plus rapide et moins de requêtes. Ajout possibilité chercher cartes sur des alts"
+            ]
+        },
         {
             version: "2.1.7",
             date: "01/10/2026 - 23:21",
@@ -57,6 +64,7 @@
     window.wmProcessedCards = new Set();
     window.wmPendingCardTitle = null;
     window.wmInventoryMap = {};
+    window.wmTags = {};
     window.wmUserId = null;
     window._wmMutating = false;
 

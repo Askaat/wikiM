@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Trade Helper & Smart Trades Routines
 // ============================================================
 (function(W, WikiM) {
@@ -41,7 +41,7 @@
             if (!cls.includes('border-[var(--color-accent)]')) return;
             const title = c.querySelector('h3')?.textContent?.trim();
             if (!title) return;
-            const cardData = getCardDataFromReact(c);
+            const cardData = window.getCardDataFromReact(c);
             selected.push({ el: c, title, cardId: cardData?.id || null });
         });
         return selected;
@@ -59,7 +59,7 @@
     async function ensurePriceForTrade(cardId, title) {
         if (!cardId || !title) return;
         if (window.wmPrices[title] && window.wmPrices[title] !== 'LOADING') return;
-        await fetchPricesBackground(cardId, title);
+        await window.fetchPricesBackground(cardId, title);
     }
 
     async function computeTradeHelper() {
@@ -729,9 +729,11 @@
                 status.style.color = "#60a5fa";
 
                 const headers = { "accept": "*/*", "content-type": "application/json" };
-                // Fix apikey : On vérifie proprement si l'objet et la clé existent
-                if (window.wmAuth?.apikey) headers["apikey"] = window.wmAuth.apikey;
-                if (window.wmAuth?.token) headers["authorization"] = window.wmAuth.token;
+                const authObj = window.wmAuth || (typeof W !== 'undefined' ? W.wmAuth : null);
+                if (authObj?.apikey) headers["apikey"] = authObj.apikey;
+                if (authObj?.token) {
+                    headers["authorization"] = authObj.token.startsWith('Bearer ') ? authObj.token : `Bearer ${authObj.token}`;
+                }
 
                 const res = await fetch("https://www.wiki-masters.com/api/trades", {
                     method: "POST", headers: headers, body: JSON.stringify(payload), credentials: "include"
@@ -752,29 +754,40 @@
             }
         }
 
+        // Exposition des fonctions internes sur window et WikiM
+        window.ensureIdentity = ensureIdentity;
+        window.WikiM.ensureIdentity = ensureIdentity;
+        window.getCardPrice = getCardPrice;
+        window.WikiM.getCardPrice = getCardPrice;
+        window.updateTradeRunUI = updateTradeRunUI;
+        window.WikiM.updateTradeRunUI = updateTradeRunUI;
+        window.openStModal = openStModal;
+        window.WikiM.openStModal = openStModal;
+        window.closeStModal = closeStModal;
+        window.WikiM.closeStModal = closeStModal;
+        window.fetchFriendsForSelect = fetchFriendsForSelect;
+        window.WikiM.fetchFriendsForSelect = fetchFriendsForSelect;
+        window.renderAltAccounts = renderAltAccounts;
+        window.WikiM.renderAltAccounts = renderAltAccounts;
+        window.renderSmartTradesList = renderSmartTradesList;
+        window.WikiM.renderSmartTradesList = renderSmartTradesList;
+        window.fetchCollectionByKeyword = fetchCollectionByKeyword;
+        window.WikiM.fetchCollectionByKeyword = fetchCollectionByKeyword;
+        window.runAutoScan = runAutoScan;
+        window.WikiM.runAutoScan = runAutoScan;
+        window.sendSmartTrade = sendSmartTrade;
+        window.WikiM.sendSmartTrade = sendSmartTrade;
     }
     window.initSmartTradesUI = initSmartTradesUI;
     window.WikiM.initSmartTradesUI = initSmartTradesUI;
 
-    // --- Cross-module exports ---
-    if (typeof getSmartTrades !== 'undefined') { window.getSmartTrades = getSmartTrades; window.WikiM.getSmartTrades = getSmartTrades; }
-    if (typeof saveSmartTrades !== 'undefined') { window.saveSmartTrades = saveSmartTrades; window.WikiM.saveSmartTrades = saveSmartTrades; }
-    if (typeof getOpenTradeModal !== 'undefined') { window.getOpenTradeModal = getOpenTradeModal; window.WikiM.getOpenTradeModal = getOpenTradeModal; }
-    if (typeof getTradeSelectedCards !== 'undefined') { window.getTradeSelectedCards = getTradeSelectedCards; window.WikiM.getTradeSelectedCards = getTradeSelectedCards; }
-    if (typeof getCardValue !== 'undefined') { window.getCardValue = getCardValue; window.WikiM.getCardValue = getCardValue; }
-    if (typeof ensurePriceForTrade !== 'undefined') { window.ensurePriceForTrade = ensurePriceForTrade; window.WikiM.ensurePriceForTrade = ensurePriceForTrade; }
-    if (typeof computeTradeHelper !== 'undefined') { window.computeTradeHelper = computeTradeHelper; window.WikiM.computeTradeHelper = computeTradeHelper; }
-    if (typeof updateTradeHelperUI !== 'undefined') { window.updateTradeHelperUI = updateTradeHelperUI; window.WikiM.updateTradeHelperUI = updateTradeHelperUI; }
-    if (typeof initSmartTradesUI !== 'undefined') { window.initSmartTradesUI = initSmartTradesUI; window.WikiM.initSmartTradesUI = initSmartTradesUI; }
-    if (typeof ensureIdentity !== 'undefined') { window.ensureIdentity = ensureIdentity; window.WikiM.ensureIdentity = ensureIdentity; }
-    if (typeof getCardPrice !== 'undefined') { window.getCardPrice = getCardPrice; window.WikiM.getCardPrice = getCardPrice; }
-    if (typeof updateTradeRunUI !== 'undefined') { window.updateTradeRunUI = updateTradeRunUI; window.WikiM.updateTradeRunUI = updateTradeRunUI; }
-    if (typeof openStModal !== 'undefined') { window.openStModal = openStModal; window.WikiM.openStModal = openStModal; }
-    if (typeof closeStModal !== 'undefined') { window.closeStModal = closeStModal; window.WikiM.closeStModal = closeStModal; }
-    if (typeof fetchFriendsForSelect !== 'undefined') { window.fetchFriendsForSelect = fetchFriendsForSelect; window.WikiM.fetchFriendsForSelect = fetchFriendsForSelect; }
-    if (typeof renderAltAccounts !== 'undefined') { window.renderAltAccounts = renderAltAccounts; window.WikiM.renderAltAccounts = renderAltAccounts; }
-    if (typeof renderSmartTradesList !== 'undefined') { window.renderSmartTradesList = renderSmartTradesList; window.WikiM.renderSmartTradesList = renderSmartTradesList; }
-    if (typeof fetchCollectionByKeyword !== 'undefined') { window.fetchCollectionByKeyword = fetchCollectionByKeyword; window.WikiM.fetchCollectionByKeyword = fetchCollectionByKeyword; }
-    if (typeof runAutoScan !== 'undefined') { window.runAutoScan = runAutoScan; window.WikiM.runAutoScan = runAutoScan; }
-    if (typeof sendSmartTrade !== 'undefined') { window.sendSmartTrade = sendSmartTrade; window.WikiM.sendSmartTrade = sendSmartTrade; }
+    // --- Cross-module exports (fonctions de niveau module) ---
+    window.getSmartTrades = WikiM.getSmartTrades = getSmartTrades;
+    window.saveSmartTrades = WikiM.saveSmartTrades = saveSmartTrades;
+    window.getOpenTradeModal = WikiM.getOpenTradeModal = getOpenTradeModal;
+    window.getTradeSelectedCards = WikiM.getTradeSelectedCards = getTradeSelectedCards;
+    window.getCardValue = WikiM.getCardValue = getCardValue;
+    window.ensurePriceForTrade = WikiM.ensurePriceForTrade = ensurePriceForTrade;
+    window.computeTradeHelper = WikiM.computeTradeHelper = computeTradeHelper;
+    window.updateTradeHelperUI = WikiM.updateTradeHelperUI = updateTradeHelperUI;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

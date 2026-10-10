@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Control Panel UI & Tabs
 // ============================================================
 (function(W, WikiM) {
@@ -13,7 +13,7 @@
         currentTab = tabName;
         document.querySelectorAll('.wm-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         document.querySelectorAll('.wm-tab-content').forEach(c => c.classList.toggle('hidden', c.dataset.tab !== tabName));
-        if (tabName === 'balance') renderBalanceUI();
+        if (tabName === 'balance') window.renderBalanceUI();
     }
 
     function createControlPanel() {
@@ -30,7 +30,7 @@
         `;
         document.body.appendChild(toggleBtn);
 
-        const savedPos = getMenuPosition();
+        const savedPos = window.getMenuPosition();
         if (savedPos) {
             toggleBtn.style.left = savedPos.left + 'px';
             toggleBtn.style.top = savedPos.top + 'px';
@@ -202,6 +202,10 @@
             <div class="wm-tab-content hidden" data-tab="prefs">
                 <div>
                     <div class="wm-section-title">Recherche Multi-Comptes</div>
+                    <div class="wm-pref-row" style="margin-bottom:8px;">
+                        <label for="wm-pref-multi-enabled" style="font-weight:bold; color:#fbbf24;">Activer la recherche multi-comptes</label>
+                        <input type="checkbox" id="wm-pref-multi-enabled" ${localStorage.getItem('wmMultiSearchEnabled') === 'true' ? 'checked' : ''}>
+                    </div>
                     <div class="wm-input-group">
                         <input type="text" id="wm-alt-input" class="wm-panel-input" placeholder="Pseudo exact d'un ami/alt...">
                         <button id="wm-alt-add-btn" class="wm-panel-btn">Ajouter</button>
@@ -210,14 +214,14 @@
                 </div>
                 <div>
                     <div class="wm-section-title">Notifications</div>
-                    <div class="wm-pref-row"><label for="wm-pref-browser">Notification navigateur</label><input type="checkbox" id="wm-pref-browser" ${getPrefs().browser ? 'checked' : ''}></div>
-                    <div class="wm-pref-row"><label for="wm-pref-toast">Toast in-page</label><input type="checkbox" id="wm-pref-toast" ${getPrefs().toast ? 'checked' : ''}></div>
-                    <div class="wm-pref-row"><label for="wm-pref-sound">Son (triple bip)</label><input type="checkbox" id="wm-pref-sound" ${getPrefs().sound ? 'checked' : ''}></div>
+                    <div class="wm-pref-row"><label for="wm-pref-browser">Notification navigateur</label><input type="checkbox" id="wm-pref-browser" ${window.getPrefs().browser ? 'checked' : ''}></div>
+                    <div class="wm-pref-row"><label for="wm-pref-toast">Toast in-page</label><input type="checkbox" id="wm-pref-toast" ${window.getPrefs().toast ? 'checked' : ''}></div>
+                    <div class="wm-pref-row"><label for="wm-pref-sound">Son (triple bip)</label><input type="checkbox" id="wm-pref-sound" ${window.getPrefs().sound ? 'checked' : ''}></div>
                 </div>
                 <div>
                     <div class="wm-section-title">Délais</div>
-                    <div class="wm-pref-row"><label for="wm-pref-trigger">Délai par défaut (s)</label><input type="number" id="wm-pref-trigger" value="${getPrefs().defaultTriggerBefore}" min="5" max="3600"></div>
-                    <div class="wm-pref-row"><label for="wm-pref-refresh">Refresh end_at (s)</label><input type="number" id="wm-pref-refresh" value="${getPrefs().refreshInterval}" min="10" max="300"></div>
+                    <div class="wm-pref-row"><label for="wm-pref-trigger">Délai par défaut (s)</label><input type="number" id="wm-pref-trigger" value="${window.getPrefs().defaultTriggerBefore}" min="5" max="3600"></div>
+                    <div class="wm-pref-row"><label for="wm-pref-refresh">Refresh end_at (s)</label><input type="number" id="wm-pref-refresh" value="${window.getPrefs().refreshInterval}" min="10" max="300"></div>
                 </div>
             </div>
 
@@ -248,6 +252,8 @@
             panel.style.bottom = 'auto';
             panel.style.right = 'auto';
         }
+        window.repositionPanel = repositionPanel;
+        window.WikiM.repositionPanel = repositionPanel;
 
         let dragState = { isDown: false, startX: 0, startY: 0, btnStartX: 0, btnStartY: 0, longPressTimer: null, isDragging: false };
 
@@ -295,11 +301,11 @@
                     panel.classList.add('show');
                     toggleBtn.classList.add('wm-menu-open');
                     repositionPanel();
-                    if (currentTab === 'balance') renderBalanceUI();
+                    if (currentTab === 'balance') window.renderBalanceUI();
                 }
             } else if (dragState.isDragging) {
                 const rect = toggleBtn.getBoundingClientRect();
-                saveMenuPosition({ left: rect.left, top: rect.top });
+                window.saveMenuPosition({ left: rect.left, top: rect.top });
             }
             dragState.isDown = false;
             dragState.isDragging = false;
@@ -326,7 +332,7 @@
         });
 
         const savePrefsFromUI = () => {
-            savePrefs({
+            window.savePrefs({
                 browser: document.getElementById('wm-pref-browser').checked,
                 toast: document.getElementById('wm-pref-toast').checked,
                 sound: document.getElementById('wm-pref-sound').checked,
@@ -334,11 +340,21 @@
                 refreshInterval: parseInt(document.getElementById('wm-pref-refresh').value, 10) || 30,
                 defaultTriggerBefore: parseInt(document.getElementById('wm-pref-trigger').value, 10) || 60
             });
-            logToPanel('⚙️ Préférences sauvegardées');
+            window.logToPanel('⚙️ Préférences sauvegardées');
         };
         ['wm-pref-browser', 'wm-pref-toast', 'wm-pref-sound', 'wm-pref-trigger', 'wm-pref-refresh'].forEach(id => {
             document.getElementById(id).addEventListener('change', savePrefsFromUI);
         });
+
+        const multiToggle = document.getElementById('wm-pref-multi-enabled');
+        if (multiToggle) {
+            multiToggle.addEventListener('change', () => {
+                localStorage.setItem('wmMultiSearchEnabled', multiToggle.checked ? 'true' : 'false');
+                window.logToPanel(multiToggle.checked ? '👥 Recherche multi-comptes activée' : '👤 Recherche multi-comptes désactivée');
+                const colToggle = document.getElementById('wm-col-multi-toggle');
+                if (colToggle) colToggle.checked = multiToggle.checked;
+            });
+        }
 
         document.getElementById('wm-ping-btn').addEventListener('click', async () => {
             const valDisplay = document.getElementById('wm-ping-val');
@@ -350,14 +366,14 @@
                 const diff = Math.round(performance.now() - start);
                 valDisplay.innerText = `${diff} ms`;
                 valDisplay.style.color = diff > 2000 ? "#ef4444" : (diff > 800 ? "#fbbf24" : "#10b981");
-                logToPanel(`🏓 Ping Serveur : ${diff} ms`);
+                window.logToPanel(`🏓 Ping Serveur : ${diff} ms`);
             } catch(e) {
                 valDisplay.innerText = "Erreur"; valDisplay.style.color = "#ef4444";
             }
         });
 
         document.getElementById('wm-bulk-clear-btn').addEventListener('click', () => {
-            saveBulkList([]); updateBulkUI(); logToPanel("🗑️ Panier Bulk vidé.");
+            window.saveBulkList([]); window.updateBulkUI(); window.logToPanel("🗑️ Panier Bulk vidé.");
             document.querySelectorAll('.wm-btn-bulk').forEach(btn => {
                 btn.classList.remove('wm-btn-bulk-active');
                 btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
@@ -365,10 +381,10 @@
         });
 
         document.getElementById('wm-bulk-exec-btn').addEventListener('click', async () => {
-            const list = getBulkList();
+            const list = window.getBulkList();
             if (list.length === 0) return;
 
-            logToPanel(`🚀 Lancement Bulk Delete (${list.length} cartes)...`);
+            window.logToPanel(`🚀 Lancement Bulk Delete (${list.length} cartes)...`);
 
             const readyToDelete = [];
             const remainingList = [];
@@ -379,9 +395,9 @@
             for (const item of list) {
                 const title = typeof item === 'string' ? item : item.title;
                 const cardId = typeof item === 'object' ? item.id : null;
-                let userCardId = typeof item === 'object' ? item.userCardId : null;
+                let userCardId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
 
-                // Si déjà résolu (ajouté avec succès via toggleBulkForCard)
+                // Si déjà résolu (ajouté avec succès via toggleBulkForCard ou pack)
                 if (userCardId) {
                     readyToDelete.push({ title, userCardId, cardId });
                     resolvedFromIndex++;
@@ -389,56 +405,56 @@
                 }
 
                 // Sinon, tente la résolution
-                userCardId = await wmResolveUserCardId(cardId, title);
+                userCardId = await window.wmResolveUserCardId(cardId, title);
 
                 if (userCardId) {
                     readyToDelete.push({ title, userCardId, cardId });
                     resolvedFromApi++;
                 } else {
-                    logToPanel(`⚠️ "${title}" — impossible de résoudre user_card_id`);
+                    window.logToPanel(`⚠️ "${title}" — impossible de résoudre user_card_id`);
                     remainingList.push({ title, id: cardId, userCardId: null });
                 }
             }
 
-            logToPanel(`🔎 Résolution : ${resolvedFromIndex} depuis l'index, ${resolvedFromApi} via API, ${remainingList.length} échecs`);
+            window.logToPanel(`🔎 Résolution : ${resolvedFromIndex} depuis l'index, ${resolvedFromApi} via API, ${remainingList.length} échecs`);
 
             // ---- Phase 2 : appel bulk delete ----
             if (readyToDelete.length > 0) {
-                logToPanel(`[API] ⚡ Exécution globale (${readyToDelete.length} cartes)...`);
+                window.logToPanel(`[API] ⚡ Exécution globale (${readyToDelete.length} cartes)...`);
                 const userCardIds = readyToDelete.map(item => item.userCardId);
-                const result = await executeBulkDiscard(userCardIds);
+                const result = await window.executeBulkDiscard(userCardIds);
 
                 if (result && result.success) {
-                    logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
-                    showWMToast(`Suppression réussie ! +${result.count} WB`, true);
+                    window.logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
+                    window.showWMToast(`Suppression réussie ! +${result.count} WB`, true);
 
                     for (const item of readyToDelete) {
-                        markCardAsProcessedByTitle(item.title);
-                        if (typeof userCardIdCache !== 'undefined') userCardIdCache.delete(item.title);
+                        window.markCardAsProcessedByTitle(item.title);
+                        if (typeof window.userCardIdCache !== 'undefined') window.userCardIdCache.delete(item.title);
                         if (window.wmInventoryMap) delete window.wmInventoryMap[item.title];
                     }
 
                     // Met à jour le solde si dispo
                     if (typeof result.balance === 'number') {
-                        recordBalance(result.balance, 'bulk_discard');
+                        window.recordBalance(result.balance, 'bulk_discard');
                     }
                 } else {
-                    logToPanel(`[API] ❌ Échec de la requête (status ${result?.status || 'inconnu'})`);
-                    showWMToast("Erreur API lors de la défausse groupée.", false);
+                    window.logToPanel(`[API] ❌ Échec de la requête (status ${result?.status || 'inconnu'})`);
+                    window.showWMToast("Erreur API lors de la défausse groupée.", false);
                     // Remet les cartes en attente
                     readyToDelete.forEach(item => remainingList.push({
                         title: item.title, id: item.cardId, userCardId: item.userCardId
                     }));
                 }
             } else {
-                logToPanel(`❌ Aucune carte valide prête à être défaussée.`);
+                window.logToPanel(`❌ Aucune carte valide prête à être défaussée.`);
             }
 
             // ---- Phase 3 : nettoyage ----
-            saveBulkList(remainingList);
-            updateBulkUI();
-            logToPanel(`🏁 Bulk terminé. ${remainingList.length} restante(s).`);
-            if (typeof updateAllBulkButtonsUI === 'function') updateAllBulkButtonsUI();
+            window.saveBulkList(remainingList);
+            window.updateBulkUI();
+            window.logToPanel(`🏁 Bulk terminé. ${remainingList.length} restante(s).`);
+            if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
         });
         document.getElementById('wm-search-btn').addEventListener('click', async () => {
             const uuid = document.getElementById('wm-card-id-input').value.trim();
@@ -459,11 +475,11 @@
 
         const scanBtn = document.getElementById('wm-scan-prices-btn');
         const scanCancelBtn = document.getElementById('wm-scan-prices-cancel');
-        if (scanBtn) scanBtn.addEventListener('click', () => runPriceScan());
+        if (scanBtn) scanBtn.addEventListener('click', () => window.runPriceScan());
         if (scanCancelBtn) scanCancelBtn.addEventListener('click', () => {
-            if (wmScanState.running) {
-                wmScanState.cancelled = true;
-                logToPanel('⏹️ Demande d\'annulation envoyée...');
+            if (window.wmScanState.running) {
+                window.wmScanState.cancelled = true;
+                window.logToPanel('⏹️ Demande d\'annulation envoyée...');
             }
         });
 
@@ -473,7 +489,7 @@
             if (!container) return;
 
             // Le tableau est parcouru dans l'ordre (le plus récent en premier si tu les ajoutes en haut du tableau WM_PATCH_NOTES)
-            container.innerHTML = WM_PATCH_NOTES.map(pn => `
+            container.innerHTML = window.WM_PATCH_NOTES.map(pn => `
                 <div class="wm-patch-item">
                     <div class="wm-patch-header">
                         <span class="wm-patch-version">v${pn.version}</span>
@@ -485,27 +501,27 @@
                 </div>
             `).join('');
         }
+        window.renderPatchNotes = renderPatchNotes;
+        window.WikiM.renderPatchNotes = renderPatchNotes;
 
         // Initialisation des sous-modules
-        if (typeof initSmartTradesUI === 'function') initSmartTradesUI();
-        if (typeof initTagGroupsUI === 'function') initTagGroupsUI();
+        if (typeof window.initSmartTradesUI === 'function') window.initSmartTradesUI();
+        if (typeof window.initTagGroupsUI === 'function') window.initTagGroupsUI();
 
 
         //ControlPanel fin
-        renderSmartTradesList();
+        if (typeof window.renderSmartTradesList === 'function') window.renderSmartTradesList();
         renderPatchNotes();
-        initTagsTab();
-        updateBulkUI();
-        renderTrackedAuctions();
-        updateTrackBadge();
-        renderBalanceUI();
-        logToPanel("V2.0.0 Démarrée.");
+        window.initTagsTab();
+        window.updateBulkUI();
+        window.renderTrackedAuctions();
+        window.updateTrackBadge();
+        window.renderBalanceUI();
+        window.logToPanel("V2.0.0 Démarrée.");
     }
 
 
     // --- Cross-module exports ---
-    if (typeof setActiveTab !== 'undefined') { window.setActiveTab = setActiveTab; window.WikiM.setActiveTab = setActiveTab; }
-    if (typeof createControlPanel !== 'undefined') { window.createControlPanel = createControlPanel; window.WikiM.createControlPanel = createControlPanel; }
-    if (typeof repositionPanel !== 'undefined') { window.repositionPanel = repositionPanel; window.WikiM.repositionPanel = repositionPanel; }
-    if (typeof renderPatchNotes !== 'undefined') { window.renderPatchNotes = renderPatchNotes; window.WikiM.renderPatchNotes = renderPatchNotes; }
+    window.setActiveTab = WikiM.setActiveTab = setActiveTab;
+    window.createControlPanel = WikiM.createControlPanel = createControlPanel;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

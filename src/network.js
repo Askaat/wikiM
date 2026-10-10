@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // WikiM - Module: Network, Interceptors & Supabase Request
 // ============================================================
 (function(W, WikiM) {
@@ -10,7 +10,7 @@
     const SUPABASE_REF = 'cyrxjeppjqsxxjayfrur';
     const SUPABASE_APIKEY_FALLBACK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5cnhqZXBwanFzeHhqYXlmcnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4ODAzMzksImV4cCI6MjA4OTQ1NjMzOX0.BZluyXygNxuQGDPxFX1zG5i-cqp10CVK-8GGtuak4Rg';
 
-    W.wmAuth = {
+    W.wmAuth = window.wmAuth = {
         apikey: SUPABASE_APIKEY_FALLBACK,
         token: null,
         userId: null,
@@ -44,7 +44,7 @@
                     if (claims && claims.sub && W.wmAuth.token !== candidate) {
                         W.wmAuth.token = candidate;
                         W.wmAuth.userId = claims.sub;
-                        W.wmUserId = claims.sub;
+                        W.wmUserId = window.wmUserId = claims.sub;
                         console.log('[WM] Token utilisateur capturé, userId:', claims.sub);
                     }
                 }
@@ -72,7 +72,7 @@
                 const claims = decodeJwt(session.access_token);
                 W.wmAuth.token = session.access_token;
                 W.wmAuth.userId = claims?.sub || session.user?.id || null;
-                W.wmUserId = W.wmAuth.userId;
+                W.wmUserId = window.wmUserId = W.wmAuth.userId;
                 console.log('[WM] Token extrait des cookies, userId:', W.wmUserId);
                 return true;
             }
@@ -103,24 +103,34 @@
                     && 'packs_remaining' in data && data.cards[0] && (data.cards[0].wikipedia_title || data.cards[0].title)) {
 
                     console.log(`[WM-Pack] 🎴 Pack ouvert : ${data.cards.length} cartes — lancement des routines...`);
-                    logToPanel(`🎴 Pack ouvert : ${data.cards.length} cartes`);
+                    window.logToPanel(`🎴 Pack ouvert : ${data.cards.length} cartes`);
+
+                    // NOUVEAU : Capture des IDs physiques depuis owned_copies !
+                    if (Array.isArray(data.owned_copies)) {
+                        data.owned_copies.forEach(copy => {
+                            if (copy.card_id && copy.id) {
+                                window.wmCardIdToUserCardId.set(copy.card_id, copy.id);
+                                console.log(`[WM-Bulk] 🔗 Lien mémorisé : Global ${copy.card_id} -> Physique ${copy.id}`);
+                            }
+                        });
+                    }
 
                     // 1. Lancement du scan des prix
                     data.cards.forEach((card, i) => {
                         const uuid = card.id;
                         const title = card.wikipedia_title || card.title;
-                        if (uuid && title) setTimeout(() => fetchPricesBackground(uuid, title), i * 120);
+                        if (uuid && title) setTimeout(() => window.fetchPricesBackground(uuid, title), i * 120);
                     });
 
                     // 2. Lancement de l'Auto-Tag intelligent (1.5s après, le temps que la DB s'actualise)
                     if (typeof processAutoTags === 'function') {
-                        setTimeout(() => processAutoTags(data.cards), 1500);
+                        setTimeout(() => window.processAutoTags(data.cards), 1500);
                     }
                 }
 
                 // Détection de la mise à jour du solde
                 if (data && typeof data === 'object' && typeof data.wikibidous_balance === 'number' && data.username) {
-                    recordBalance(data.wikibidous_balance, 'passive');
+                    window.recordBalance(data.wikibidous_balance, 'passive');
                 }
             } catch(e) {}
             return data;
@@ -133,6 +143,8 @@
 
     window.wmAltCardOwners = {};
     window.wmMultiSearchCache = null;
+    let currentMultiSearchController = null;
+    let currentSearchSequence = 0;
 
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
@@ -154,61 +166,147 @@
 
         // ---> FUSION DES RECHERCHES MULTI-COMPTES <---
         if (url && url.includes('/api/my-collection') && url.includes('q=')) {
+            const isMultiEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
             const urlObj = new URL(url.startsWith('http') ? url : window.location.origin + url);
             const query = urlObj.searchParams.get('q');
             const page = parseInt(urlObj.searchParams.get('page') || '0', 10);
             const altAccounts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
 
-            // On ne déclenche la lourde logique QUE si on fait une vraie recherche avec des comptes alternatifs
-            if (query && query.trim() !== '' && altAccounts.length > 0) {
+            // Interception active UNIQUEMENT si l'option est activée et qu'il y a des comptes
+            if (isMultiEnabled && query && query.trim() !== '' && altAccounts.length > 0) {
 
-                // Si la recherche a changé, on reconstruit le Méga-Tableau
+                // Si la recherche a changé, on annule la précédente et on reconstruit
                 if (!window.wmMultiSearchCache || window.wmMultiSearchCache.query !== query) {
-                    logToPanel(`🔍 Recherche Multi-Comptes pour "${query}"...`);
-                    window.wmMultiSearchCache = { query: query, cards: [] };
+                    // 1. Annulation immédiate de la recherche précédente si encore en vol
+                    if (currentMultiSearchController) {
+                        try { currentMultiSearchController.abort(); } catch(e) {}
+                    }
+                    const controller = new AbortController();
+                    currentMultiSearchController = controller;
+                    const searchSeq = ++currentSearchSequence;
 
-                    // Fonction interne pour pomper toutes les pages d'une route spécifique
-                    const fetchAllPages = async (baseUrl) => {
+                    window.logToPanel(`🔍 Recherche Multi-Comptes pour "${query}"...`);
+                    const newCache = { query: query, cards: [] };
+
+                    const reportProgress = (msg, isDone = false) => {
+                        if (typeof window.updateMultiSearchProgress === 'function') {
+                            window.updateMultiSearchProgress(msg, isDone);
+                        }
+                    };
+
+                    // Fonction fetch avec retry (3 tentatives max en cas d'erreur)
+                    const fetchWithRetry = async (fetchUrl, maxRetries = 3) => {
+                        let attempts = 0;
+                        while (attempts < maxRetries) {
+                            if (controller.signal.aborted || searchSeq !== currentSearchSequence) return null;
+                            attempts++;
+                            try {
+                                const res = await originalFetch(fetchUrl, {
+                                    credentials: "include",
+                                    signal: controller.signal
+                                });
+                                if (res && res.ok) {
+                                    const data = await res.json().catch(() => null);
+                                    if (data) return data;
+                                }
+                            } catch(err) {
+                                if (controller.signal.aborted) return null;
+                            }
+                            if (attempts < maxRetries && !controller.signal.aborted) {
+                                await new Promise(r => setTimeout(r, attempts * 350));
+                            }
+                        }
+                        return null;
+                    };
+
+                    // Fonction interne avec annulation réactive et retries
+                    const fetchAllPages = async (baseUrl, accountName) => {
                         let p = 0;
                         let allCards = [];
                         while (true) {
-                            const res = await originalFetch(`${baseUrl}&page=${p}&stats=0`, { credentials: "include" });
-                            if (!res.ok) break;
-                            const data = await res.json();
+                            if (controller.signal.aborted || searchSeq !== currentSearchSequence) break;
+
+                            reportProgress(`⏳ [${accountName}] page ${p + 1}... (${allCards.length} cartes)`);
+
+                            const data = await fetchWithRetry(`${baseUrl}&page=${p}&stats=0`, 3);
+                            if (!data) break;
+
                             const items = data.collection || [];
                             if (items.length === 0) break;
                             allCards = allCards.concat(items);
                             if (items.length < 20) break; // Fin des résultats
                             p++;
-                            await new Promise(r => setTimeout(r, 200)); // Délai anti-spam
+
+                            // Délai anti-spam avec annulation instantanée
+                            try {
+                                await new Promise((resolve, reject) => {
+                                    const timer = setTimeout(resolve, 200);
+                                    controller.signal.addEventListener('abort', () => {
+                                        clearTimeout(timer);
+                                        reject(new DOMException('Aborted', 'AbortError'));
+                                    }, { once: true });
+                                });
+                            } catch(abortErr) {
+                                break;
+                            }
                         }
                         return allCards;
                     };
 
                     try {
-                        // 1. Ton compte principal
-                        const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`);
-                        window.wmMultiSearchCache.cards.push(...myCards);
+                        const totalAccounts = 1 + altAccounts.length;
 
-                        // 2. Les comptes alternatifs
-                        for (const alt of altAccounts) {
-                            const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}`);
-                            altCards.forEach(c => window.wmAltCardOwners[c.id] = alt); // On marque le propriétaire
-                            window.wmMultiSearchCache.cards.push(...altCards);
+                        // 1. Compte principal
+                        reportProgress(`⏳ (1/${totalAccounts}) Mon compte...`);
+                        const myCards = await fetchAllPages(`/api/my-collection?q=${encodeURIComponent(query)}`, 'Moi');
+                        if (controller.signal.aborted || searchSeq !== currentSearchSequence) {
+                            return new Response(JSON.stringify({ collection: [] }), {
+                                status: 200,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
                         }
-                        logToPanel(`✅ Recherche terminée : ${window.wmMultiSearchCache.cards.length} cartes trouvées au total.`);
+                        newCache.cards.push(...myCards);
+
+                        // 2. Comptes alternatifs
+                        for (let aIdx = 0; aIdx < altAccounts.length; aIdx++) {
+                            const alt = altAccounts[aIdx];
+                            if (controller.signal.aborted || searchSeq !== currentSearchSequence) break;
+
+                            reportProgress(`⏳ (${aIdx + 2}/${totalAccounts}) ${alt}...`);
+                            const altCards = await fetchAllPages(`/api/profile/${alt}/collection?q=${encodeURIComponent(query)}`, alt);
+
+                            // Enregistrement exhaustif des identifiants et titres pour les badges
+                            altCards.forEach(c => {
+                                if (c.id) window.wmAltCardOwners[c.id] = alt;
+                                if (c.card_id) window.wmAltCardOwners[c.card_id] = alt;
+                                if (c.card && c.card.id) window.wmAltCardOwners[c.card.id] = alt;
+                                const title = c.card?.wikipedia_title || c.wikipedia_title || c.title;
+                                if (title) window.wmAltCardOwners[`title:${title}`] = alt;
+                            });
+
+                            newCache.cards.push(...altCards);
+                        }
+
+                        if (!controller.signal.aborted && searchSeq === currentSearchSequence) {
+                            window.wmMultiSearchCache = newCache;
+                            const totalFound = window.wmMultiSearchCache.cards.length;
+                            reportProgress(`✅ ${totalFound} carte(s) trouvée(s)`, true);
+                            window.logToPanel(`✅ Recherche terminée : ${totalFound} cartes trouvées au total.`);
+                        }
                     } catch (e) {
-                        console.error("[WM-Multi] Erreur de recherche :", e);
+                        if (e.name !== 'AbortError') {
+                            console.error("[WM-Multi] Erreur de recherche :", e);
+                            reportProgress('❌ Erreur');
+                        }
                     }
                 }
 
                 // ---> PAGINATION VIRTUELLE <---
-                const PAGE_SIZE = 50; // Format attendu par l'UI du jeu
+                const PAGE_SIZE = 50;
                 const start = page * PAGE_SIZE;
                 const end = start + PAGE_SIZE;
-                const paginatedCards = window.wmMultiSearchCache.cards.slice(start, end);
+                const paginatedCards = (window.wmMultiSearchCache?.cards || []).slice(start, end);
 
-                // On renvoie une fausse réponse formatée exactement comme le serveur
                 return new Response(JSON.stringify({ collection: paginatedCards }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' }
@@ -216,7 +314,18 @@
             }
         }
 
-        const response = await originalFetch.apply(this, args);
+        const isCollectionReq = Boolean(url && url.includes('/api/my-collection'));
+        if (isCollectionReq) window.wmCollectionLoading = true;
+
+        let response;
+        try {
+            response = await originalFetch.apply(this, args);
+        } finally {
+            if (isCollectionReq) {
+                window.wmCollectionLoading = false;
+                window.wmCollectionLastLoaded = Date.now();
+            }
+        }
 
         try {
             // Interception des prix du marché
@@ -293,7 +402,7 @@
  * Version de supabaseRequest avec retry automatique.
  */
     function supabaseRequestWithRetry(method, path, body = null, opts = {}) {
-        return withRetry(
+        return window.withRetry(
             () => supabaseRequest(method, path, body),
             {
                 label: `Supabase ${method} ${path.split('?')[0]}`,
@@ -318,8 +427,8 @@
     window.SUPABASE_URL = SUPABASE_URL;
 
     // --- Cross-module exports ---
-    if (typeof decodeJwt !== 'undefined') { window.decodeJwt = decodeJwt; window.WikiM.decodeJwt = decodeJwt; }
-    if (typeof extractTokenFromCookies !== 'undefined') { window.extractTokenFromCookies = extractTokenFromCookies; window.WikiM.extractTokenFromCookies = extractTokenFromCookies; }
-    if (typeof supabaseRequest !== 'undefined') { window.supabaseRequest = supabaseRequest; window.WikiM.supabaseRequest = supabaseRequest; }
-    if (typeof supabaseRequestWithRetry !== 'undefined') { window.supabaseRequestWithRetry = supabaseRequestWithRetry; window.WikiM.supabaseRequestWithRetry = supabaseRequestWithRetry; }
+    window.decodeJwt = WikiM.decodeJwt = decodeJwt;
+    window.extractTokenFromCookies = WikiM.extractTokenFromCookies = extractTokenFromCookies;
+    window.supabaseRequest = WikiM.supabaseRequest = supabaseRequest;
+    window.supabaseRequestWithRetry = WikiM.supabaseRequestWithRetry = supabaseRequestWithRetry;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});
