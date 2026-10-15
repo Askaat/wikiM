@@ -1185,7 +1185,7 @@
                                             <option value="">⚠️ Sélectionner mon tag...</option>
                                             ${(window.wmTagsCache || []).map(t => `
                                                 <option value="${escapeHtml(t.id)}" ${selectedId === t.id ? 'selected' : ''}>
-                                                    🏷️ ${escapeHtml(t.name)}
+                                                    ${escapeHtml(t.name)}
                                                 </option>
                                             `).join('')}
                                         </select>
