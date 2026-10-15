@@ -1,5 +1,5 @@
 // ============================================================
-// WikiM - Module: Tags Engine, Rules & Tag Groups (Advanced Builder + Preview Modal)
+// WikiM - Module: Tags Engine, Rules & Tag Groups (Advanced Builder + Preview Modal + Gist Subscriptions)
 // ============================================================
 (function(W, WikiM) {
     'use strict';
@@ -15,14 +15,14 @@
     };
 
     // ============================================================
-    // INJECTION DU CSS DE LA MODALE AVANCÉE, DES CHIPS & DE LA PREVIEW
+    // INJECTION DU CSS DE LA MODALE AVANCÉE, DES CHIPS, DE LA PREVIEW & DU GIST
     // ============================================================
     function ensureRuleBuilderStyles() {
         if (document.getElementById('wm-rule-builder-styles')) return;
         const style = document.createElement('style');
         style.id = 'wm-rule-builder-styles';
         style.textContent = `
-            #wm-rule-builder-overlay, #wm-tag-preview-overlay {
+            #wm-rule-builder-overlay, #wm-tag-preview-overlay, #wm-gist-map-overlay {
                 position: fixed;
                 inset: 0;
                 background: rgba(2, 6, 23, 0.84);
@@ -382,7 +382,6 @@
                 justify-content: flex-end;
                 max-width: 55%;
             }
-            /* Étiquette de Tag avec petit bouton croix en haut à droite */
             .wm-pv-tag-badge {
                 position: relative;
                 display: inline-flex;
@@ -434,7 +433,6 @@
                 transform: scale(1.18);
                 background: #dc2626;
             }
-            /* Bouton + Ajout et son menu déroulant de tags */
             .wm-pv-add-wrap {
                 position: relative;
                 display: inline-flex;
@@ -500,6 +498,67 @@
                 align-items: center;
                 gap: 12px;
                 flex-wrap: wrap;
+            }
+
+            /* --- STYLES ONGLETS IMPORT/EXPORT & ABONNEMENTS GIST --- */
+            .wm-ie-tabs {
+                display: flex;
+                gap: 6px;
+                background: rgba(2, 6, 23, 0.65);
+                padding: 4px;
+                border-radius: 10px;
+                border: 1px solid rgba(148, 163, 184, 0.18);
+                margin-bottom: 14px;
+            }
+            .wm-ie-tab-btn {
+                flex: 1;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 7px;
+                background: transparent;
+                color: #94a3b8;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+            .wm-ie-tab-btn.active {
+                background: #4f46e5;
+                color: #ffffff;
+                box-shadow: 0 2px 10px rgba(79, 70, 229, 0.35);
+            }
+            .wm-gist-group-card {
+                background: rgba(30, 41, 59, 0.65);
+                border: 1px solid rgba(148, 163, 184, 0.22);
+                border-radius: 10px;
+                padding: 12px 14px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+            .wm-gist-slot-row {
+                background: rgba(30, 41, 59, 0.6);
+                border: 1px solid rgba(148, 163, 184, 0.22);
+                border-radius: 10px;
+                padding: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+            .wm-sub-badge {
+                background: rgba(14, 165, 233, 0.18);
+                color: #38bdf8;
+                border: 1px solid rgba(56, 189, 248, 0.4);
+                font-size: 9px;
+                font-weight: 800;
+                padding: 2px 6px;
+                border-radius: 999px;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
             }
         `;
         document.head.appendChild(style);
@@ -745,9 +804,11 @@
     }
 
     // ============================================================
-    // MOTEUR DE RÈGLES D'AUTO-TAGGING (GROUPES, NORMALISATION & IMPORT/EXPORT)
+    // MOTEUR DE RÈGLES D'AUTO-TAGGING (GROUPES, NORMALISATION & GIST)
     // ============================================================
     const WM_TAG_GROUPS_KEY = 'wmTagGroups';
+    const WM_SHARED_GIST_ID_KEY = 'wmSharedGistId';
+    let cachedGistCatalog = null;
 
     function normalizeRuleStructure(rule) {
         if (!rule || typeof rule !== 'object') {
@@ -980,6 +1041,298 @@
     window.WikiM.initTagGroupsUI = initTagGroupsUI;
 
     // ============================================================
+    // GESTION DES ABONNEMENTS GIST & MAPPING D'IDS SUPABASE
+    // ============================================================
+    function extractGistIdFromInput(rawInput) {
+        const trimmed = String(rawInput || '').trim();
+        if (!trimmed) return '';
+        // Supporte une URL complète https://gist.github.com/user/gist_id ou juste l'ID
+        const match = trimmed.match(/([a-f0-9]{20,})/i);
+        return match ? match[1] : trimmed;
+    }
+
+    async function fetchSharedGistCatalog(rawGistInput) {
+        const gistId = extractGistIdFromInput(rawGistInput);
+        if (!gistId) throw new Error('Veuillez saisir un Gist ID valide.');
+
+        localStorage.setItem(WM_SHARED_GIST_ID_KEY, gistId);
+
+        const res = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
+            headers: { 'Accept': 'application/vnd.github+json' }
+        });
+        if (!res.ok) throw new Error(`Gist introuvable ou inaccessible (HTTP ${res.status})`);
+        const gistData = await res.json();
+
+        const files = Object.values(gistData.files || {});
+        const jsonFile = files.find(f => f.filename === 'wikim_shared_tags.json') || files.find(f => f.filename.endsWith('.json')) || files[0];
+        if (!jsonFile || !jsonFile.content) throw new Error('Aucun fichier JSON trouvé dans ce Gist.');
+
+        const parsed = JSON.parse(jsonFile.content);
+        if (!parsed || !Array.isArray(parsed.groups)) {
+            throw new Error('Le fichier Gist ne contient pas de tableau "groups".');
+        }
+
+        cachedGistCatalog = {
+            gistId,
+            updatedAt: parsed.updatedAt || gistData.updated_at || new Date().toISOString(),
+            groups: parsed.groups
+        };
+        return cachedGistCatalog;
+    }
+
+    function buildSubscribedLocalGroup(sharedGroup, gistId, updatedAt, tagMapping, existingGroup = null) {
+        // Préserve l'état activé/désactivé (enabled) des règles si l'utilisateur met à jour un abonnement existant
+        const previousEnabledMap = new Map();
+        if (existingGroup && Array.isArray(existingGroup.rules)) {
+            existingGroup.rules.forEach(r => {
+                const key = r.sharedRuleId || r.name;
+                if (key) previousEnabledMap.set(key, r.enabled !== false);
+            });
+        }
+
+        const mappedRules = (sharedGroup.rules || []).map((sr, idx) => {
+            const ruleKey = sr.id || sr.name || `sr_${idx}`;
+            const localTagId = tagMapping[sr.tagSlotId] || '';
+            const norm = normalizeRuleStructure({
+                id: `subrule_${sharedGroup.id}_${idx}`,
+                sharedRuleId: ruleKey,
+                name: sr.name || `Règle partagée #${idx + 1}`,
+                tagSlotId: sr.tagSlotId || '',
+                tagId: localTagId,
+                enabled: previousEnabledMap.has(ruleKey) ? previousEnabledMap.get(ruleKey) : true,
+                isReadOnly: true,
+                rootGroup: sr.rootGroup
+            });
+            norm.sharedRuleId = ruleKey;
+            norm.tagSlotId = sr.tagSlotId || '';
+            norm.isReadOnly = true;
+            return norm;
+        });
+
+        return {
+            id: existingGroup?.id || ('sub_' + sharedGroup.id + '_' + Date.now()),
+            name: sharedGroup.name || 'Groupe Partagé',
+            emoji: sharedGroup.emoji || '🌐',
+            isOpen: existingGroup ? existingGroup.isOpen : true,
+            isSubscribed: true,
+            sharedGroupId: sharedGroup.id,
+            gistId: gistId,
+            syncedAt: updatedAt,
+            requiredTags: Array.isArray(sharedGroup.requiredTags) ? sharedGroup.requiredTags : [],
+            tagMapping: { ...tagMapping },
+            rules: mappedRules
+        };
+    }
+
+    function openSharedGroupMappingModal(sharedGroup, gistId, updatedAt) {
+        ensureRuleBuilderStyles();
+
+        const existingOverlay = document.getElementById('wm-gist-map-overlay');
+        if (existingOverlay) existingOverlay.remove();
+
+        const localGroups = getTagGroups();
+        const existingSub = localGroups.find(g => g.isSubscribed && g.sharedGroupId === sharedGroup.id);
+        const currentMapping = { ...(existingSub?.tagMapping || {}) };
+
+        const requiredTags = Array.isArray(sharedGroup.requiredTags) ? sharedGroup.requiredTags : [];
+
+        // Auto-détection intelligente par nom si pas encore mappé
+        requiredTags.forEach(slot => {
+            if (!currentMapping[slot.slotId]) {
+                const byName = (window.wmTagsCache || []).find(t =>
+                    t.name.trim().toLowerCase() === (slot.label || '').trim().toLowerCase()
+                );
+                if (byName) currentMapping[slot.slotId] = byName.id;
+            }
+        });
+
+        const overlay = document.createElement('div');
+        overlay.id = 'wm-gist-map-overlay';
+
+        const renderModalContent = () => {
+            overlay.innerHTML = `
+                <div class="wm-rb-modal" style="max-width:620px;" role="dialog" aria-modal="true">
+                    <div class="wm-rb-header">
+                        <div>
+                            <h3 style="margin:0;font-size:16px;font-weight:800;color:#f8fafc;">
+                                🔗 Liaison des étiquettes — ${escapeHtml(sharedGroup.emoji || '🌐')} ${escapeHtml(sharedGroup.name)}
+                            </h3>
+                            <div style="font-size:11px;color:#94a3b8;margin-top:4px;">
+                                Associez chaque étiquette générique du groupe partagé à l'une de vos étiquettes locales.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="wm-rb-body" style="gap:10px;">
+                        ${requiredTags.length === 0 ? `
+                            <div style="padding:16px;color:#94a3b8;text-align:center;">
+                                Ce groupe ne définit aucun slot générique requis.
+                            </div>
+                        ` : requiredTags.map(slot => {
+                            const selectedId = currentMapping[slot.slotId] || '';
+                            const color = slot.suggestedColor || '#6366f1';
+                            return `
+                                <div class="wm-gist-slot-row" data-slot-row="${escapeHtml(slot.slotId)}">
+                                    <div style="display:flex;align-items:center;gap:10px;min-width:200px;flex:1;">
+                                        <span style="width:14px;height:14px;border-radius:4px;background:${escapeHtml(color)};flex-shrink:0;"></span>
+                                        <div>
+                                            <div style="font-weight:700;font-size:13px;color:#f1f5f9;">${escapeHtml(slot.label || slot.slotId)}</div>
+                                            <div style="font-family:monospace;font-size:10px;color:#64748b;">Slot: ${escapeHtml(slot.slotId)}</div>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                        <select class="wm-rb-select" data-map-select="${escapeHtml(slot.slotId)}" style="min-width:185px;font-weight:700;">
+                                            <option value="">⚠️ Sélectionner mon tag...</option>
+                                            ${(window.wmTagsCache || []).map(t => `
+                                                <option value="${escapeHtml(t.id)}" ${selectedId === t.id ? 'selected' : ''}>
+                                                    🏷️ ${escapeHtml(t.name)}
+                                                </option>
+                                            `).join('')}
+                                        </select>
+                                        <button type="button" class="wm-panel-btn ghost" data-quick-create="${escapeHtml(slot.slotId)}" style="padding:7px 10px;font-size:11px;border-color:rgba(16,185,129,0.45);color:#34d399;" title="Créer automatiquement cette étiquette sur ce compte et la lier">
+                                            ✨ Créer & Lier
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div class="wm-pv-footer">
+                        <span style="font-size:11px;color:#94a3b8;">
+                            🔒 Les règles abonnées seront ajoutées en lecture seule.
+                        </span>
+                        <div style="display:flex;gap:10px;">
+                            <button type="button" id="wm-gist-map-cancel" class="wm-panel-btn ghost">Annuler</button>
+                            <button type="button" id="wm-gist-map-confirm" class="wm-panel-btn" style="background:linear-gradient(135deg,#4f46e5,#6366f1);font-weight:700;">
+                                ✅ Enregistrer l'abonnement
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            overlay.querySelectorAll('[data-map-select]').forEach(sel => {
+                sel.addEventListener('change', () => {
+                    currentMapping[sel.dataset.mapSelect] = sel.value;
+                });
+            });
+
+            overlay.querySelectorAll('[data-quick-create]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const slotId = btn.dataset.quickCreate;
+                    const slot = requiredTags.find(s => s.slotId === slotId);
+                    if (!slot) return;
+
+                    const tagName = prompt('Nom de la nouvelle étiquette à créer sur votre compte :', slot.label || slot.slotId);
+                    if (!tagName || !tagName.trim()) return;
+
+                    btn.disabled = true;
+                    btn.textContent = '⏳...';
+                    try {
+                        const created = await wmCreateTag(tagName.trim(), slot.suggestedColor || '#6366f1');
+                        if (created && created.id) {
+                            currentMapping[slotId] = created.id;
+                            renderTagsList();
+                            renderModalContent();
+                            window.logToPanel(`🏷️ Étiquette "${created.name}" créée et liée à ${slotId}`);
+                        }
+                    } catch (e) {
+                        alert(`Erreur lors de la création de l'étiquette : ${e.message}`);
+                        btn.disabled = false;
+                        btn.textContent = '✨ Créer & Lier';
+                    }
+                });
+            });
+
+            overlay.querySelector('#wm-gist-map-cancel').addEventListener('click', () => overlay.remove());
+
+            overlay.querySelector('#wm-gist-map-confirm').addEventListener('click', () => {
+                const groups = getTagGroups();
+                const existingIdx = groups.findIndex(g => g.isSubscribed && g.sharedGroupId === sharedGroup.id);
+                const builtGroup = buildSubscribedLocalGroup(
+                    sharedGroup,
+                    gistId,
+                    updatedAt,
+                    currentMapping,
+                    existingIdx !== -1 ? groups[existingIdx] : null
+                );
+
+                if (existingIdx !== -1) {
+                    groups[existingIdx] = builtGroup;
+                } else {
+                    groups.push(builtGroup);
+                }
+
+                saveTagGroups(groups);
+                renderRulesList();
+                overlay.remove();
+
+                // Rafraîchit aussi la liste dans la modale Import/Export si elle est ouverte
+                if (typeof window._wmRefreshGistCatalogUI === 'function') {
+                    window._wmRefreshGistCatalogUI();
+                }
+
+                window.logToPanel(`🌐 Abonnement actif sur "${builtGroup.name}" (${builtGroup.rules.length} règles liées).`);
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`Abonné à "${builtGroup.name}" !`, true);
+                }
+            });
+        };
+
+        document.body.appendChild(overlay);
+        renderModalContent();
+    }
+
+    async function syncSubscribedGroup(gIdx) {
+        const groups = getTagGroups();
+        const group = groups[gIdx];
+        if (!group || !group.isSubscribed) return;
+
+        const gistId = group.gistId || localStorage.getItem(WM_SHARED_GIST_ID_KEY);
+        if (!gistId) {
+            window.logToPanel('❌ Aucun Gist ID associé à ce groupe.');
+            return;
+        }
+
+        try {
+            window.logToPanel(`🔄 Synchronisation de "${group.name}" depuis le Gist...`);
+            const catalog = await fetchSharedGistCatalog(gistId);
+            const remoteGroup = catalog.groups.find(rg => rg.id === group.sharedGroupId);
+            if (!remoteGroup) {
+                throw new Error(`Le groupe "${group.sharedGroupId}" n'existe plus sur ce Gist.`);
+            }
+
+            // Vérifie si de nouveaux slots requis ont été ajoutés sur le Gist et ne sont pas encore mappés
+            const unmappedSlots = (remoteGroup.requiredTags || []).filter(
+                slot => !group.tagMapping || !group.tagMapping[slot.slotId]
+            );
+
+            if (unmappedSlots.length > 0) {
+                window.logToPanel(`⚠️ Nouveaux tags génériques détectés pour "${group.name}", ouverture du mapping...`);
+                openSharedGroupMappingModal(remoteGroup, catalog.gistId, catalog.updatedAt);
+                return;
+            }
+
+            groups[gIdx] = buildSubscribedLocalGroup(
+                remoteGroup,
+                catalog.gistId,
+                catalog.updatedAt,
+                group.tagMapping || {},
+                group
+            );
+            saveTagGroups(groups);
+            renderRulesList();
+            window.logToPanel(`✅ "${group.name}" synchronisé avec succès !`);
+            if (typeof window.showWMToast === 'function') {
+                window.showWMToast(`"${group.name}" mis à jour !`, true);
+            }
+        } catch (e) {
+            window.logToPanel(`❌ Erreur sync Gist : ${e.message}`);
+        }
+    }
+
+    // ============================================================
     // UI ONGLET TAGS
     // ============================================================
     async function initTagsTab() {
@@ -1030,7 +1383,7 @@
             wrapper.style.cssText = "display:flex; gap:6px; margin-bottom:8px;";
             wrapper.innerHTML = `
                 <button id="wm-btn-add-group" class="wm-panel-btn" style="flex:1;">📁 Nouveau Groupe</button>
-                <button id="wm-btn-ie-modal" class="wm-panel-btn ghost" style="flex:1;">⚙️ Import / Export</button>
+                <button id="wm-btn-ie-modal" class="wm-panel-btn ghost" style="flex:1;">🌐 Gist / Import</button>
             `;
             oldAddRuleBtn.replaceWith(wrapper);
 
@@ -1050,26 +1403,150 @@
         }
 
         if (!document.getElementById('wm-ie-overlay')) {
+            const savedGistId = localStorage.getItem(WM_SHARED_GIST_ID_KEY) || '';
             const modal = document.createElement('div');
             modal.id = "wm-ie-overlay";
-            modal.style.cssText = "display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100001;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
+            modal.style.cssText = "display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:100001;align-items:center;justify-content:center;backdrop-filter:blur(5px);padding:16px;";
             modal.innerHTML = `
-                <div style="background:#0f172a;border:1px solid #4f46e5;border-radius:12px;padding:20px;width:90%;max-width:500px;color:white;box-shadow:0 24px 48px rgba(0,0,0,0.7);">
-                    <h3 style="margin-top:0;font-size:16px;">⚙️ Import / Export des Règles</h3>
-                    <p style="font-size:11px;color:#94a3b8;margin-bottom:12px;">Générez votre code d'export (compatible avec les arbres logiques ET/OU), ou collez un JSON pour importer des dossiers.</p>
-                    <textarea id="wm-ie-textarea" style="width:100%;height:150px;background:rgba(30,41,59,0.8);color:#fbbf24;border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;outline:none;resize:vertical;" placeholder="Collez un code d'import ici..."></textarea>
-                    <div style="display:flex;gap:10px;margin-top:16px;justify-content:space-between;">
-                        <button id="wm-btn-ie-close" class="wm-panel-btn ghost">Fermer</button>
-                        <div style="display:flex;gap:10px;">
-                            <button id="wm-btn-ie-export" class="wm-panel-btn ghost">📤 Exporter</button>
-                            <button id="wm-btn-ie-import" class="wm-panel-btn">📥 Importer</button>
+                <div style="background:#0f172a;border:1px solid #4f46e5;border-radius:14px;padding:20px;width:95%;max-width:620px;color:white;box-shadow:0 24px 48px rgba(0,0,0,0.75);display:flex;flex-direction:column;max-height:86vh;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <h3 style="margin:0;font-size:16px;">🌐 Règles Partagées & Import / Export</h3>
+                        <button id="wm-btn-ie-close" class="wm-panel-btn ghost" style="padding:4px 10px;">✕</button>
+                    </div>
+
+                    <!-- Barre d'onglets -->
+                    <div class="wm-ie-tabs">
+                        <button type="button" class="wm-ie-tab-btn active" data-ie-tab="gist">🌐 Gist Commun / Abonnements</button>
+                        <button type="button" class="wm-ie-tab-btn" data-ie-tab="local">📁 Import / Export JSON Local</button>
+                    </div>
+
+                    <!-- ONGLET 1 : GIST COMMUN / ABONNEMENTS -->
+                    <div id="wm-ie-pane-gist" style="display:flex;flex-direction:column;gap:12px;overflow-y:auto;flex:1;">
+                        <div style="font-size:11px;color:#94a3b8;line-height:1.4;">
+                            Entrez l'ID ou l'URL du GitHub Gist contenant vos groupes de règles partagées, puis associez les tags génériques aux étiquettes de ce compte.
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <input type="text" id="wm-gist-id-input" class="wm-rb-input" style="flex:1;min-width:200px;font-family:monospace;" placeholder="ID ou URL du Gist (ex: a1b2c3d4e5f6...)" value="${escapeHtml(savedGistId)}">
+                            <button type="button" id="wm-btn-gist-fetch" class="wm-panel-btn">🔄 Charger le Gist</button>
+                            <button type="button" id="wm-btn-gist-sync-all" class="wm-panel-btn ghost" title="Mettre à jour tous les groupes abonnés">⚡ Tout Sync</button>
+                        </div>
+                        <div id="wm-gist-catalog-list" style="display:flex;flex-direction:column;gap:8px;min-height:120px;max-height:340px;overflow-y:auto;padding-right:2px;">
+                            <div style="color:#64748b;font-size:12px;text-align:center;padding:30px 10px;">
+                                Cliquez sur "🔄 Charger le Gist" pour afficher les groupes partagés disponibles.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ONGLET 2 : IMPORT / EXPORT MANUEL -->
+                    <div id="wm-ie-pane-local" style="display:none;flex-direction:column;gap:10px;">
+                        <p style="font-size:11px;color:#94a3b8;margin:0;">
+                            Générez votre code d'export (à coller dans <code>dashboard_tags.html</code> ou un autre compte), ou collez un JSON pour importer des dossiers locaux.
+                        </p>
+                        <textarea id="wm-ie-textarea" style="width:100%;height:170px;background:rgba(30,41,59,0.8);color:#fbbf24;border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;outline:none;resize:vertical;" placeholder="Collez un code d'import ici..."></textarea>
+                        <div style="display:flex;gap:10px;justify-content:flex-end;">
+                            <button id="wm-btn-ie-export" class="wm-panel-btn ghost">📤 Exporter mes groupes</button>
+                            <button id="wm-btn-ie-import" class="wm-panel-btn">📥 Importer en local</button>
                         </div>
                     </div>
                 </div>
             `;
             document.body.appendChild(modal);
 
+            // Switch entre les 2 onglets
+            modal.querySelectorAll('[data-ie-tab]').forEach(tabBtn => {
+                tabBtn.addEventListener('click', () => {
+                    modal.querySelectorAll('[data-ie-tab]').forEach(b => b.classList.remove('active'));
+                    tabBtn.classList.add('active');
+                    const isGist = tabBtn.dataset.ieTab === 'gist';
+                    document.getElementById('wm-ie-pane-gist').style.display = isGist ? 'flex' : 'none';
+                    document.getElementById('wm-ie-pane-local').style.display = isGist ? 'none' : 'flex';
+                });
+            });
+
             document.getElementById('wm-btn-ie-close').addEventListener('click', () => modal.style.display = 'none');
+            modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+
+            // Rendu du catalogue Gist
+            const renderCatalogUI = () => {
+                const listEl = document.getElementById('wm-gist-catalog-list');
+                if (!cachedGistCatalog || !Array.isArray(cachedGistCatalog.groups)) return;
+
+                const localGroups = getTagGroups();
+                if (cachedGistCatalog.groups.length === 0) {
+                    listEl.innerHTML = `<div style="color:#94a3b8;text-align:center;padding:20px;">Aucun groupe trouvé dans ce Gist.</div>`;
+                    return;
+                }
+
+                listEl.innerHTML = cachedGistCatalog.groups.map((sg, idx) => {
+                    const sub = localGroups.find(g => g.isSubscribed && g.sharedGroupId === sg.id);
+                    const rulesCount = (sg.rules || []).length;
+                    const slotsCount = (sg.requiredTags || []).length;
+
+                    return `
+                        <div class="wm-gist-group-card">
+                            <div style="min-width:0;flex:1;">
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <span style="font-size:15px;">${escapeHtml(sg.emoji || '🌐')}</span>
+                                    <span style="font-weight:800;font-size:13px;color:#f8fafc;">${escapeHtml(sg.name || 'Groupe sans nom')}</span>
+                                    ${sub ? `<span class="wm-sub-badge">✅ Abonné</span>` : ''}
+                                </div>
+                                <div style="font-size:11px;color:#94a3b8;margin-top:4px;">
+                                    ⚙️ ${rulesCount} règle(s) • 🏷️ ${slotsCount} tag(s) requis :
+                                    ${(sg.requiredTags || []).map(t => `<span style="color:#cbd5e1;font-weight:600;">${escapeHtml(t.label)}</span>`).join(', ') || 'Aucun'}
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <button type="button" class="wm-panel-btn ${sub ? 'ghost' : ''}" data-gist-sub="${idx}" style="padding:6px 12px;font-size:11px;">
+                                    ${sub ? '🔗 Remapper / Mettre à jour' : '➕ S\'abonner'}
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                listEl.querySelectorAll('[data-gist-sub]').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const idx = Number(btn.dataset.gistSub);
+                        const sg = cachedGistCatalog.groups[idx];
+                        if (sg) {
+                            openSharedGroupMappingModal(sg, cachedGistCatalog.gistId, cachedGistCatalog.updatedAt);
+                        }
+                    });
+                });
+            };
+            window._wmRefreshGistCatalogUI = renderCatalogUI;
+
+            document.getElementById('wm-btn-gist-fetch').addEventListener('click', async () => {
+                const inp = document.getElementById('wm-gist-id-input');
+                const btn = document.getElementById('wm-btn-gist-fetch');
+                const listEl = document.getElementById('wm-gist-catalog-list');
+                btn.disabled = true;
+                btn.textContent = '⏳...';
+                listEl.innerHTML = `<div style="color:#fbbf24;text-align:center;padding:24px;">Chargement du Gist en cours...</div>`;
+                try {
+                    await fetchSharedGistCatalog(inp.value);
+                    renderCatalogUI();
+                    window.logToPanel(`🌐 Catalogue Gist chargé (${cachedGistCatalog.groups.length} groupes).`);
+                } catch (e) {
+                    listEl.innerHTML = `<div style="color:#ef4444;text-align:center;padding:20px;">❌ ${escapeHtml(e.message)}</div>`;
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '🔄 Charger le Gist';
+                }
+            });
+
+            document.getElementById('wm-btn-gist-sync-all').addEventListener('click', async () => {
+                const groups = getTagGroups();
+                const subIndexes = groups.map((g, i) => g.isSubscribed ? i : -1).filter(i => i !== -1);
+                if (subIndexes.length === 0) {
+                    alert("Vous n'avez encore aucun groupe abonné à synchroniser.");
+                    return;
+                }
+                for (const idx of subIndexes) {
+                    await syncSubscribedGroup(idx);
+                }
+                renderCatalogUI();
+            });
 
             document.getElementById('wm-btn-ie-export').addEventListener('click', () => {
                 const groups = getTagGroups();
@@ -1395,7 +1872,6 @@
         const existingOverlay = document.getElementById('wm-tag-preview-overlay');
         if (existingOverlay) existingOverlay.remove();
 
-        // Collecte des tags distincts présents dans la prévisualisation pour le filtre d'en-tête
         const getDistinctTagIds = () => {
             const s = new Set();
             cardEntries.forEach(entry => entry.actions.forEach(a => { if (a.tagId) s.add(a.tagId); }));
@@ -1407,7 +1883,6 @@
         overlay.id = 'wm-tag-preview-overlay';
         overlay.innerHTML = `
             <div class="wm-rb-modal wm-preview-modal" role="dialog" aria-modal="true">
-                <!-- EN-TÊTE -->
                 <div class="wm-rb-header">
                     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <h3 style="margin:0;font-size:16px;font-weight:800;color:#f8fafc;">🔎 Détails des modifications de tags</h3>
@@ -1420,7 +1895,6 @@
                     </div>
                 </div>
 
-                <!-- BARRE D'OUTILS & FILTRES RAPIDES -->
                 <div class="wm-pv-toolbar">
                     <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:260px;">
                         <input type="text" id="wm-pv-search" class="wm-rb-input" placeholder="🔍 Filtrer par titre de carte..." style="flex:1;min-width:180px;">
@@ -1443,10 +1917,8 @@
                     </div>
                 </div>
 
-                <!-- LISTE DES CARTES ET ÉTIQUETTES -->
                 <div class="wm-pv-list" id="wm-pv-list-container"></div>
 
-                <!-- PIED DE MODALE -->
                 <div class="wm-pv-footer">
                     <span id="wm-pv-visible-info" style="font-size:11px;color:#94a3b8;font-family:monospace;">0 cartes affichées</span>
                     <div style="display:flex;gap:10px;">
@@ -1469,7 +1941,6 @@
         const applyTopBtn = overlay.querySelector('#wm-pv-apply-top');
         const applyBottomBtn = overlay.querySelector('#wm-pv-apply-bottom');
 
-        // Ferme tout menu "+ Ajout" ouvert si on clique ailleurs dans la modale
         const closeAllAddMenus = () => {
             overlay.querySelectorAll('.wm-pv-add-menu').forEach(m => m.remove());
         };
@@ -1572,7 +2043,6 @@
                 const addWrap = row.querySelector('.wm-pv-add-wrap');
                 const addBtn = row.querySelector('.wm-pv-add-btn');
 
-                // Rendu des étiquettes actives avec la petite croix en haut à droite
                 activeActions.forEach(act => {
                     const tagObj = window.wmTagsCache.find(t => t.id === act.tagId);
                     const tagName = tagObj ? tagObj.name : (act.tagId || 'Inconnu');
@@ -1589,7 +2059,6 @@
                         <button type="button" class="wm-pv-tag-del" title="Retirer cette action">✕</button>
                     `;
 
-                    // Clic sur la petite croix en haut à droite -> retire l'étiquette
                     badge.querySelector('.wm-pv-tag-del').addEventListener('click', (e) => {
                         e.stopPropagation();
                         act.enabled = false;
@@ -1600,7 +2069,6 @@
                     tagsHolder.appendChild(badge);
                 });
 
-                // Clic sur "+ Ajout" -> ouvre un menu déroulant avec tous nos tags
                 addBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const existingMenu = addWrap.querySelector('.wm-pv-add-menu');
@@ -1610,7 +2078,6 @@
                     const menu = document.createElement('div');
                     menu.className = 'wm-pv-add-menu';
 
-                    // Filtrer les tags qui ne sont pas déjà en ajout actif sur cette carte
                     const availableTags = (window.wmTagsCache || []).filter(t =>
                         !entry.actions.some(a => a.enabled && a.type === 'add' && a.tagId === t.id)
                     );
@@ -1628,14 +2095,12 @@
                             `;
                             itemBtn.addEventListener('click', (ev) => {
                                 ev.stopPropagation();
-                                // Si l'action existait déjà (ex: supprimée via la croix), on la réactive
                                 let existingAct = entry.actions.find(a => a.tagId === t.id && a.type === 'add');
                                 if (existingAct) {
                                     existingAct.enabled = true;
                                 } else {
                                     entry.actions.push({ type: 'add', tagId: t.id, enabled: true });
                                 }
-                                // Si ce tag était prévu en retrait sur cette même carte, on désactive le retrait
                                 const conflictRem = entry.actions.find(a => a.tagId === t.id && a.type === 'remove');
                                 if (conflictRem) conflictRem.enabled = false;
 
@@ -1656,12 +2121,10 @@
             listContainer.appendChild(fragment);
         }
 
-        // Événements de filtrage
         searchInput.addEventListener('input', renderRows);
         typeSelect.addEventListener('change', renderRows);
         tagSelect.addEventListener('change', renderRows);
 
-        // Tout activer / Tout vider (sur les cartes filtrées visibles)
         overlay.querySelector('#wm-pv-check-all').addEventListener('click', () => {
             getFilteredEntries().forEach(entry => entry.actions.forEach(a => { a.enabled = true; }));
             refreshCountersAndSync();
@@ -1674,7 +2137,6 @@
             renderRows();
         });
 
-        // Fermeture & Application directe
         const closeModal = () => {
             refreshCountersAndSync();
             overlay.remove();
@@ -1742,7 +2204,7 @@
     }
 
     // ============================================================
-    // RENDU DE LA LISTE DES GROUPES ET RÈGLES (VOLET LATÉRAL COMPACT)
+    // RENDU DE LA LISTE DES GROUPES ET RÈGLES (AVEC SUPPORT ABONNÉ / LECTURE SEULE)
     // ============================================================
     function renderRulesList() {
         const container = document.getElementById('wm-rules-list');
@@ -1750,18 +2212,32 @@
         const groups = getTagGroups();
 
         if (groups.length === 0) {
-            container.innerHTML = '<div class="wm-tracked-empty">Aucun groupe. Cliquez sur "📁 Nouveau Groupe".</div>';
+            container.innerHTML = '<div class="wm-tracked-empty">Aucun groupe. Cliquez sur "📁 Nouveau Groupe" ou "🌐 Gist / Import".</div>';
             return;
         }
 
         container.innerHTML = groups.map((g, gIdx) => {
-            const emoji = g.emoji || '📁';
+            const isSub = Boolean(g.isSubscribed);
+            const emoji = g.emoji || (isSub ? '🌐' : '📁');
+            const borderCol = isSub ? 'rgba(56, 189, 248, 0.35)' : 'rgba(148,163,184,0.2)';
+
             return `
-            <div style="background:rgba(30,41,59,0.6);border:1px solid rgba(148,163,184,0.2);border-radius:8px;overflow:hidden;margin-bottom:8px;">
-                <div data-group-toggle="${gIdx}" style="padding:10px 12px;background:rgba(15,23,42,0.6);display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:${g.isOpen ? '1px solid rgba(255,255,255,0.05)' : 'none'};">
-                    <span style="font-size:13px;font-weight:bold;color:#e5e7eb;pointer-events:none;">${escapeHtml(emoji)} ${escapeHtml(g.name)} (${(g.rules||[]).length})</span>
-                    <div style="display:flex; gap:6px; align-items:center;">
-                        <button data-group-edit="${gIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:white;padding:3px 7px;cursor:pointer;font-size:11px;" title="Modifier le dossier">⚙️</button>
+            <div style="background:rgba(30,41,59,0.6);border:1px solid ${borderCol};border-radius:8px;overflow:hidden;margin-bottom:8px;">
+                <div data-group-toggle="${gIdx}" style="padding:10px 12px;background:rgba(15,23,42,0.65);display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:${g.isOpen ? '1px solid rgba(255,255,255,0.05)' : 'none'};">
+                    <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;pointer-events:none;">
+                        <span style="font-size:13px;font-weight:bold;color:#e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${escapeHtml(emoji)} ${escapeHtml(g.name)} (${(g.rules||[]).length})
+                        </span>
+                        ${isSub ? `<span class="wm-sub-badge" title="Groupe synchronisé depuis un Gist (Lecture seule)">🌐 Abonné</span>` : ''}
+                    </div>
+                    <div style="display:flex; gap:5px; align-items:center; flex-shrink:0;">
+                        ${isSub ? `
+                            <button data-group-sync="${gIdx}" style="background:rgba(14,165,233,0.25);border:1px solid rgba(56,189,248,0.4);border-radius:6px;color:#7dd3fc;padding:3px 7px;cursor:pointer;font-size:10px;font-weight:700;" title="Synchroniser avec le Gist">🔄</button>
+                            <button data-group-remap="${gIdx}" style="background:rgba(79,70,229,0.3);border:1px solid rgba(99,102,241,0.5);border-radius:6px;color:#c7d2fe;padding:3px 7px;cursor:pointer;font-size:10px;font-weight:700;" title="Remapper les étiquettes locales">🔗 Tags</button>
+                            <button data-group-detach="${gIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:#cbd5e1;padding:3px 7px;cursor:pointer;font-size:10px;" title="Détacher du Gist (convertir en groupe local modifiable)">🔓</button>
+                        ` : `
+                            <button data-group-edit="${gIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:white;padding:3px 7px;cursor:pointer;font-size:11px;" title="Modifier le dossier">⚙️</button>
+                        `}
                         <button data-group-remove="${gIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:3px 7px;cursor:pointer;font-size:11px;" title="Supprimer le dossier">🗑️</button>
                         <span style="color:#94a3b8;font-size:12px;pointer-events:none;margin-left:2px;">${g.isOpen ? '▲' : '▼'}</span>
                     </div>
@@ -1775,7 +2251,7 @@
                         const summaryHtml = formatGroupNatural(rule.rootGroup, true, true);
 
                         return `
-                        <div class="wm-rule-card-draggable" data-drag-rule="${gIdx}-${rIdx}" style="background:rgba(15,23,42,0.65);border:1px solid ${tagBorder};border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;transition:opacity 0.2s;">
+                        <div class="${isSub ? '' : 'wm-rule-card-draggable'}" ${isSub ? '' : `data-drag-rule="${gIdx}-${rIdx}"`} style="background:rgba(15,23,42,0.65);border:1px solid ${tagBorder};border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;transition:opacity 0.2s;">
                             <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
                                 <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#f1f5f9;cursor:pointer;min-width:0;flex:1;">
                                     <input type="checkbox" data-rule-toggle="${gIdx}-${rIdx}" ${rule.enabled !== false ? 'checked' : ''} style="accent-color:#6366f1;cursor:pointer;flex-shrink:0;">
@@ -1784,27 +2260,35 @@
                                 <div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">
                                     ${tagObj
                                         ? `<span style="background:${tagObj.color || '#6366f1'};color:#000;padding:2px 6px;border-radius:5px;font-size:10px;font-weight:800;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(tagObj.name)}</span>`
-                                        : `<span style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid #ef4444;padding:1px 6px;border-radius:5px;font-size:9px;font-weight:700;">⚠️ Sans Tag</span>`
+                                        : `<span style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid #ef4444;padding:1px 6px;border-radius:5px;font-size:9px;font-weight:700;">⚠️ Non lié</span>`
                                     }
-                                    <span class="wm-drag-handle" style="cursor:grab;color:#64748b;font-size:14px;padding:0 3px;user-select:none;" title="Glisser pour réorganiser">☰</span>
+                                    ${!isSub ? `<span class="wm-drag-handle" style="cursor:grab;color:#64748b;font-size:14px;padding:0 3px;user-select:none;" title="Glisser pour réorganiser">☰</span>` : `<span style="font-size:11px;color:#38bdf8;" title="Règle synchronisée (Lecture seule)">🔒</span>`}
                                 </div>
                             </div>
 
-                            <div data-rule-edit="${gIdx}-${rIdx}" title="Cliquer pour ouvrir l'éditeur logique avancé" style="background:rgba(2,6,23,0.55);border:1px solid rgba(148,163,184,0.12);border-radius:6px;padding:6px 8px;font-size:11px;line-height:1.4;cursor:pointer;word-break:break-word;">
+                            <div ${isSub ? '' : `data-rule-edit="${gIdx}-${rIdx}"`} title="${isSub ? 'Règle gérée par le Gist partagé (Lecture seule)' : 'Cliquer pour ouvrir l\'éditeur logique avancé'}" style="background:rgba(2,6,23,0.55);border:1px solid rgba(148,163,184,0.12);border-radius:6px;padding:6px 8px;font-size:11px;line-height:1.4;cursor:${isSub ? 'default' : 'pointer'};word-break:break-word;">
                                 ${summaryHtml}
                             </div>
 
-                            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                                <button data-rule-edit="${gIdx}-${rIdx}" class="wm-panel-btn" style="flex:1;padding:5px 8px;font-size:11px;background:rgba(79,70,229,0.85);">
-                                    ✏️ Éditer la logique
-                                </button>
-                                <button data-rule-dup="${gIdx}-${rIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:#cbd5e1;padding:5px 8px;cursor:pointer;font-size:11px;" title="Dupliquer cette règle">📄</button>
-                                <button data-rule-remove="${gIdx}-${rIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:5px 8px;cursor:pointer;font-size:11px;" title="Supprimer cette règle">🗑️</button>
-                            </div>
+                            ${!isSub ? `
+                                <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                                    <button data-rule-edit="${gIdx}-${rIdx}" class="wm-panel-btn" style="flex:1;padding:5px 8px;font-size:11px;background:rgba(79,70,229,0.85);">
+                                        ✏️ Éditer la logique
+                                    </button>
+                                    <button data-rule-dup="${gIdx}-${rIdx}" style="background:rgba(51,65,85,0.7);border:none;border-radius:6px;color:#cbd5e1;padding:5px 8px;cursor:pointer;font-size:11px;" title="Dupliquer cette règle">📄</button>
+                                    <button data-rule-remove="${gIdx}-${rIdx}" style="background:rgba(127,29,29,0.7);border:none;border-radius:6px;color:white;padding:5px 8px;cursor:pointer;font-size:11px;" title="Supprimer cette règle">🗑️</button>
+                                </div>
+                            ` : ''}
                         </div>
                         `;
                     }).join('')}
-                    <button data-rule-add="${gIdx}" class="wm-panel-btn ghost" style="width:100%;font-size:11px;padding:7px;">➕ Nouvelle règle avancée</button>
+                    ${!isSub ? `
+                        <button data-rule-add="${gIdx}" class="wm-panel-btn ghost" style="width:100%;font-size:11px;padding:7px;">➕ Nouvelle règle avancée</button>
+                    ` : `
+                        <div style="font-size:10px;color:#64748b;text-align:center;padding:2px 0;">
+                            🔒 Groupe synchronisé en lecture seule • Utilisez 🔗 Tags pour modifier vos étiquettes ou 🔓 pour détacher.
+                        </div>
+                    `}
                 </div>
             </div>
             `;
@@ -1926,12 +2410,45 @@
             const editTrigger = e.target.closest('[data-rule-edit]');
             if (editTrigger) {
                 const [gIdx, rIdx] = editTrigger.dataset.ruleEdit.split('-').map(Number);
+                if (groups[gIdx]?.isSubscribed) return;
                 openRuleBuilderModal(gIdx, rIdx);
                 return;
             }
 
             const btn = e.target.closest('button');
             if (btn) {
+                if (btn.matches('[data-group-sync]')) {
+                    syncSubscribedGroup(Number(btn.dataset.groupSync));
+                    return;
+                }
+                if (btn.matches('[data-group-remap]')) {
+                    const gIdx = Number(btn.dataset.groupRemap);
+                    const g = groups[gIdx];
+                    if (g && g.isSubscribed) {
+                        openSharedGroupMappingModal({
+                            id: g.sharedGroupId,
+                            name: g.name,
+                            emoji: g.emoji,
+                            requiredTags: g.requiredTags || [],
+                            rules: g.rules || []
+                        }, g.gistId, g.syncedAt);
+                    }
+                    return;
+                }
+                if (btn.matches('[data-group-detach]')) {
+                    const gIdx = Number(btn.dataset.groupDetach);
+                    const g = groups[gIdx];
+                    if (g && confirm(`Détacher "${g.name}" du Gist ?\nIl deviendra un groupe local modifiable, mais ne recevra plus les mises à jour automatiques.`)) {
+                        delete g.isSubscribed;
+                        delete g.sharedGroupId;
+                        delete g.gistId;
+                        (g.rules || []).forEach(r => { delete r.isReadOnly; });
+                        saveTagGroups(groups);
+                        renderRulesList();
+                        window.logToPanel(`🔓 Groupe "${g.name}" converti en dossier local.`);
+                    }
+                    return;
+                }
                 if (btn.matches('[data-group-edit]')) {
                     openGroupEditModal(Number(btn.dataset.groupEdit));
                     return;
@@ -1990,7 +2507,7 @@
 
         const groups = getTagGroups();
         const group = groups[gIdx];
-        if (!group) return;
+        if (!group || group.isSubscribed) return;
 
         const isNew = (rIdx === null || rIdx === undefined || !group.rules[rIdx]);
         const initialRule = isNew
@@ -2871,4 +3388,7 @@
     window.escapeHtml = WikiM.escapeHtml = escapeHtml;
     window.runTagPreview = WikiM.runTagPreview = runTagPreview;
     window.runTagApply = WikiM.runTagApply = runTagApply;
+    window.fetchSharedGistCatalog = WikiM.fetchSharedGistCatalog = fetchSharedGistCatalog;
+    window.openSharedGroupMappingModal = WikiM.openSharedGroupMappingModal = openSharedGroupMappingModal;
+    window.syncSubscribedGroup = WikiM.syncSubscribedGroup = syncSubscribedGroup;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

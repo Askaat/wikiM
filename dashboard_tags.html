@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WikiM — Dashboard Admin des Règles Partagées (Gist)</title>
+    <style>
+        :root {
+            --bg-deep: #020617;
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-input: rgba(30, 41, 59, 0.9);
+            --border: rgba(148, 163, 184, 0.2);
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --amber: #f59e0b;
+            --emerald: #10b981;
+            --danger: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg-deep);
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            font-size: 13px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .topbar {
+            background: var(--bg-main);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            color: #fff;
+        }
+        .brand-badge {
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid var(--primary);
+            color: #a5b4fc;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+        }
+        .js-status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+            border: 1px solid #ef4444;
+        }
+        .js-status.ready {
+            background: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+            border-color: #10b981;
+        }
+        .gist-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            flex: 1;
+            justify-content: flex-end;
+        }
+        .wm-input, .wm-select {
+            background: var(--bg-input);
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 8px;
+            padding: 8px 11px;
+            color: var(--text-main);
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .wm-input:focus, .wm-select:focus {
+            border-color: var(--primary);
+        }
+        .wm-btn {
+            background: var(--primary);
+            color: #fff;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .wm-btn:hover { background: var(--primary-hover); }
+        .wm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .wm-btn.ghost {
+            background: rgba(30, 41, 59, 0.75);
+            border-color: rgba(148, 163, 184, 0.3);
+            color: #e2e8f0;
+        }
+        .wm-btn.ghost:hover { border-color: var(--primary); color: #fff; }
+        .wm-btn.success { background: var(--emerald); color: #052e16; }
+        .wm-btn.danger { background: rgba(239, 68, 68, 0.2); border-color: var(--danger); color: #fca5a5; }
+        .wm-btn.danger:hover { background: var(--danger); color: #fff; }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: 310px 1fr;
+            gap: 20px;
+            padding: 20px 24px;
+            flex: 1;
+            max-width: 1600px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        @media (max-width: 1024px) {
+            .workspace { grid-template-columns: 1fr; }
+        }
+        .sidebar {
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            height: fit-content;
+        }
+        .section-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+        .group-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .group-item {
+            background: rgba(30, 41, 59, 0.55);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            transition: all 0.15s;
+        }
+        .group-item:hover { border-color: rgba(99, 102, 241, 0.5); }
+        .group-item.active {
+            background: rgba(99, 102, 241, 0.18);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 1px var(--primary);
+        }
+        .group-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .main-editor {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .card-panel {
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+            gap: 10px;
+        }
+        .slot-card {
+            background: rgba(30, 41, 59, 0.65);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rule-card {
+            background: rgba(30, 41, 59, 0.45);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .wm-rb-group {
+            background: rgba(15, 23, 42, 0.75);
+            border-radius: 10px;
+            padding: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-left: 4px solid var(--primary);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .wm-rb-group.logic-or {
+            border-left-color: var(--amber);
+        }
+        .wm-rb-logic-toggle {
+            display: inline-flex;
+            background: var(--bg-deep);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 8px;
+            padding: 2px;
+            gap: 2px;
+        }
+        .wm-rb-logic-btn {
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .wm-rb-logic-btn.active-and { background: var(--primary-hover); color: #fff; }
+        .wm-rb-logic-btn.active-or { background: #d97706; color: #fff; }
+
+        .wm-rb-cond-row {
+            background: rgba(2, 6, 23, 0.65);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 8px;
+            padding: 8px 10px;
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        .wm-rb-chips-box {
+            flex: 1;
+            min-width: 240px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .wm-rb-chips-interactive {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 8px;
+            padding: 5px 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            min-height: 34px;
+        }
+        .wm-rb-chip {
+            background: rgba(99, 102, 241, 0.22);
+            border: 1px solid rgba(99, 102, 241, 0.5);
+            color: #e0e7ff;
+            border-radius: 6px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .wm-rb-chip button {
+            background: none;
+            border: none;
+            color: #a5b4fc;
+            cursor: pointer;
+            padding: 0;
+            font-size: 11px;
+        }
+        .wm-rb-chip button:hover { color: var(--danger); }
+        .wm-rb-chip-input {
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 12px;
+            outline: none;
+            flex: 1;
+            min-width: 120px;
+        }
+        .wm-rb-divider {
+            align-self: center;
+            font-size: 10px;
+            font-weight: 800;
+            padding: 2px 10px;
+            border-radius: 999px;
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+        }
+        .wm-rb-divider.or {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fcd34d;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.84);
+            backdrop-filter: blur(6px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            padding: 20px;
+        }
+        .modal-box {
+            background: var(--bg-main);
+            border: 1px solid var(--primary);
+            border-radius: 14px;
+            padding: 20px;
+            width: 100%;
+            max-width: 680px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e293b;
+            border: 1px solid var(--primary);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-weight: 600;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+            z-index: 300;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="topbar">
+        <div class="brand">
+            <span>🏷️ WikiM Cloud Rules</span>
+            <span class="brand-badge">Dashboard Admin Gist</span>
+            <span id="js-status-pill" class="js-status">⏳ Init...</span>
+        </div>
+        <div class="gist-bar">
+            <input type="password" id="cfg-pat" class="wm-input" placeholder="🔑 GitHub PAT (scope: gist)" style="width:210px;">
+            <input type="text" id="cfg-gist-id" class="wm-input" placeholder="📄 Gist ID (vide = créer nouveau)" style="width:210px;">
+            <input type="text" id="cfg-filename" class="wm-input" value="wikim_shared_tags.json" placeholder="Nom du fichier" style="width:175px;">
+            <button type="button" class="wm-btn ghost" id="btn-load-gist">📥 Charger du Gist</button>
+            <button type="button" class="wm-btn success" id="btn-save-gist">💾 Publier sur le Gist</button>
+            <button type="button" class="wm-btn ghost" id="btn-open-import">⚡ Importer depuis WikiM</button>
+            <button type="button" class="wm-btn ghost" id="btn-open-json">{ } Voir JSON</button>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <aside class="sidebar">
+            <div class="section-hdr">
+                <span>📂 Groupes Partagés (<span id="groups-count">0</span>)</span>
+                <button type="button" class="wm-btn" id="btn-add-group" style="padding:4px 10px;font-size:11px;">+ Nouveau</button>
+            </div>
+            <div class="group-list" id="groups-list"></div>
+            <div style="border-top:1px solid var(--border);padding-top:10px;font-size:11px;color:var(--text-muted);line-height:1.5;">
+                💡 <strong>Astuce :</strong> Chaque groupe possède ses propres <em>Slots Génériques</em>. Les joueurs qui s'abonnent au Gist relieront ces slots à leurs étiquettes personnelles.
+            </div>
+        </aside>
+
+        <section class="main-editor" id="editor-container"></section>
+    </main>
+
+    <!-- MODALE : IMPORTATEUR RAPIDE DEPUIS WIKIM -->
+    <div class="modal-overlay" id="modal-import">
+        <div class="modal-box">
+            <h3 style="margin:0;">⚡ Importateur Rapide depuis WikiM</h3>
+            <p style="margin:0;color:var(--text-muted);font-size:12px;">
+                Collez ici le JSON exporté depuis le bouton <strong>"⚙️ Import / Export"</strong> de WikiM.
+                Le dashboard nettoiera automatiquement les UUIDs locaux et créera des <strong>Slots Génériques</strong> pour chaque règle.
+            </p>
+            <textarea id="import-textarea" class="wm-input" style="height:220px;font-family:monospace;resize:vertical;" placeholder='[ { "name": "Mon Dossier", "rules": [...] } ]'></textarea>
+            <div style="display:flex;justify-content:flex-end;gap:10px;">
+                <button type="button" class="wm-btn ghost" id="btn-close-import">Annuler</button>
+                <button type="button" class="wm-btn" id="btn-confirm-import">🧹 Nettoyer les IDs & Importer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALE : APERÇU DU JSON GIST -->
+    <div class="modal-overlay" id="modal-json">
+        <div class="modal-box">
+            <h3 style="margin:0;">{ } JSON Généré pour le Gist</h3>
+            <textarea id="json-preview-ta" class="wm-input" style="height:320px;font-family:monospace;color:#fbbf24;resize:vertical;" readonly></textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span id="gist-updated-label" style="font-size:11px;color:var(--text-muted);"></span>
+                <div style="display:flex;gap:10px;">
+                    <button type="button" class="wm-btn ghost" id="btn-copy-json">📋 Copier le JSON</button>
+                    <button type="button" class="wm-btn" id="btn-close-json">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // ============================================================
+        // PROTECTION DU LOCALSTORAGE EN MODE FILE://
+        // ============================================================
+        const memoryFallback = {};
+        function safeGetStorage(key) {
+            try {
+                return window.localStorage.getItem(key);
+            } catch (e) {
+                return memoryFallback[key] || null;
+            }
+        }
+        function safeSetStorage(key, val) {
+            try {
+                window.localStorage.setItem(key, val);
+            } catch (e) {
+                memoryFallback[key] = val;
+            }
+        }
+
+        const STORAGE_STATE_KEY = 'wmAdminDashboardState_v1';
+        const STORAGE_CFG_KEY = 'wmAdminGistConfig_v1';
+
+        const RULE_FIELDS = {
+            avgPrice:    { label: 'Prix moyen (WB)', type: 'number' },
+            rarity:      { label: 'Rareté', type: 'enum', values: ['C', 'PC', 'R', 'SR', 'UR', 'L'] },
+            title:       { label: 'Titre', type: 'string' },
+            category:    { label: 'Catégorie', type: 'string' },
+            description: { label: 'Description', type: 'string' }
+        };
+
+        const OPERATOR_LABELS = {
+            contains:     'contient (liste ;)',
+            not_contains: 'ne contient pas (liste ;)',
+            '=':          'est égal à (=)',
+            '!=':         'est différent de (!=)',
+            '>':          'supérieur à (>)',
+            '>=':         'supérieur ou égal (≥)',
+            '<':          'inférieur à (<)',
+            '<=':         'inférieur ou égal (≤)'
+        };
+
+        let state = {
+            updatedAt: new Date().toISOString(),
+            groups: [
+                {
+                    id: 'shared_g_1',
+                    name: 'Tri des Villes & Lieux',
+                    emoji: '🏙️',
+                    requiredTags: [
+                        { slotId: 'SLOT_CITY', label: 'Tag pour les Villes', suggestedColor: '#6366f1' }
+                    ],
+                    rules: [
+                        {
+                            id: 'sr_1',
+                            name: 'Détection Ville',
+                            tagSlotId: 'SLOT_CITY',
+                            rootGroup: {
+                                logic: 'AND',
+                                children: [
+                                    { type: 'condition', field: 'description', operator: 'contains', value: 'commune française; ville; capitale' }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+
+        let activeGroupIndex = 0;
+
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            if (!t) return;
+            t.textContent = msg;
+            t.style.borderColor = isError ? '#ef4444' : '#10b981';
+            t.style.display = 'block';
+            clearTimeout(t._timer);
+            t._timer = setTimeout(() => { t.style.display = 'none'; }, 3500);
+        }
+
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function saveLocalState() {
+            state.updatedAt = new Date().toISOString();
+            safeSetStorage(STORAGE_STATE_KEY, JSON.stringify(state));
+        }
+
+        function loadLocalState() {
+            try {
+                const raw = safeGetStorage(STORAGE_STATE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && Array.isArray(parsed.groups)) state = parsed;
+                }
+            } catch (e) {}
+
+            try {
+                const cfg = JSON.parse(safeGetStorage(STORAGE_CFG_KEY) || '{}');
+                if (cfg.pat) document.getElementById('cfg-pat').value = cfg.pat;
+                if (cfg.gistId) document.getElementById('cfg-gist-id').value = cfg.gistId;
+                if (cfg.filename) document.getElementById('cfg-filename').value = cfg.filename;
+            } catch (e) {}
+        }
+
+        function saveGistConfig() {
+            const cfg = {
+                pat: document.getElementById('cfg-pat').value.trim(),
+                gistId: document.getElementById('cfg-gist-id').value.trim(),
+                filename: document.getElementById('cfg-filename').value.trim() || 'wikim_shared_tags.json'
+            };
+            safeSetStorage(STORAGE_CFG_KEY, JSON.stringify(cfg));
+            return cfg;
+        }
+
+        function normalizeGroupNode(node) {
+            if (!node || typeof node !== 'object') {
+                return { type: 'group', logic: 'AND', children: [{ type: 'condition', field: 'title', operator: 'contains', value: '' }] };
+            }
+            const logic = (node.logic || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND';
+            const rawChildren = Array.isArray(node.children) ? node.children : [];
+            const children = rawChildren.map(ch => {
+                if (ch && (ch.type === 'group' || Array.isArray(ch.children))) {
+                    return normalizeGroupNode(ch);
+                }
+                return {
+                    type: 'condition',
+                    field: ch?.field || 'title',
+                    operator: ch?.operator || 'contains',
+                    value: ch?.value !== undefined ? ch.value : ''
+                };
+            });
+            if (children.length === 0) {
+                children.push({ type: 'condition', field: 'title', operator: 'contains', value: '' });
+            }
+            return { type: 'group', logic, children };
+        }
+
+        function renderAll() {
+            saveLocalState();
+            renderSidebar();
+            renderEditor();
+        }
+
+        function renderSidebar() {
+            const listEl = document.getElementById('groups-list');
+            const countEl = document.getElementById('groups-count');
+            if (countEl) countEl.textContent = state.groups.length;
+            if (!listEl) return;
+
+            if (state.groups.length === 0) {
+                listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:20px 0;">Aucun groupe partagé.</div>`;
+                return;
+            }
+
+            if (activeGroupIndex >= state.groups.length) activeGroupIndex = Math.max(0, state.groups.length - 1);
+
+            listEl.innerHTML = state.groups.map((g, idx) => `
+                <div class="group-item ${idx === activeGroupIndex ? 'active' : ''}" data-gidx="${idx}">
+                    <div style="min-width:0;flex:1;">
+                        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${escapeHtml(g.emoji || '📁')} ${escapeHtml(g.name || 'Groupe sans nom')}
+                        </div>
+                        <div class="group-meta">
+                            🏷️ ${(g.requiredTags || []).length} slot(s) • ⚙️ ${(g.rules || []).length} règle(s)
+                        </div>
+                    </div>
+                    <button type="button" class="wm-btn danger" data-del-group="${idx}" style="padding:4px 8px;font-size:11px;" title="Supprimer ce groupe">🗑️</button>
+                </div>
+            `).join('');
+
+            listEl.querySelectorAll('.group-item').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    if (e.target.closest('[data-del-group]')) return;
+                    activeGroupIndex = Number(el.dataset.gidx);
+                    renderAll();
+                });
+            });
+
+            listEl.querySelectorAll('[data-del-group]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const idx = Number(btn.dataset.delGroup);
+                    if (confirm(`Supprimer le groupe "${state.groups[idx]?.name}" ?`)) {
+                        state.groups.splice(idx, 1);
+                        renderAll();
+                    }
+                });
+            });
+        }
+
+        function renderEditor() {
+            const container = document.getElementById('editor-container');
+            if (!container) return;
+            const group = state.groups[activeGroupIndex];
+
+            if (!group) {
+                container.innerHTML = `
+                    <div class="card-panel" style="align-items:center;padding:48px;color:var(--text-muted);">
+                        Sélectionnez ou créez un groupe partagé à gauche pour commencer.
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="card-panel">
+                    <div class="section-hdr">
+                        <span>⚙️ Informations du Groupe Partagé</span>
+                        <span style="font-family:monospace;font-size:11px;color:#64748b;">ID: ${escapeHtml(group.id)}</span>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <div style="width:70px;">
+                            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Émoji</label>
+                            <input type="text" id="inp-g-emoji" class="wm-input" style="width:100%;text-align:center;font-size:15px;" maxlength="3" value="${escapeHtml(group.emoji || '📁')}">
+                        </div>
+                        <div style="flex:1;min-width:220px;">
+                            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Nom du groupe partagé</label>
+                            <input type="text" id="inp-g-name" class="wm-input" style="width:100%;font-weight:700;font-size:14px;" value="${escapeHtml(group.name || '')}" placeholder="Ex: Tri des Villes & Lieux">
+                        </div>
+                        <div style="width:210px;">
+                            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Identifiant unique (id)</label>
+                            <input type="text" id="inp-g-id" class="wm-input" style="width:100%;font-family:monospace;" value="${escapeHtml(group.id || '')}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card-panel">
+                    <div class="section-hdr">
+                        <span>🏷️ Étiquettes Génériques Requises (Slots de Mapping)</span>
+                        <button type="button" class="wm-btn ghost" id="btn-add-slot" style="padding:5px 12px;font-size:11px;">+ Ajouter un Slot</button>
+                    </div>
+                    <div class="slots-grid" id="slots-container"></div>
+                </div>
+
+                <div class="card-panel">
+                    <div class="section-hdr">
+                        <span>🧠 Règles Logiques du Groupe (${(group.rules || []).length})</span>
+                        <button type="button" class="wm-btn" id="btn-add-rule" style="padding:6px 14px;font-size:12px;">➕ Ajouter une Règle</button>
+                    </div>
+                    <div id="rules-container" style="display:flex;flex-direction:column;gap:14px;"></div>
+                </div>
+            `;
+
+            container.querySelector('#inp-g-emoji').addEventListener('input', (e) => {
+                group.emoji = e.target.value.trim() || '📁';
+                saveLocalState();
+                renderSidebar();
+            });
+            container.querySelector('#inp-g-name').addEventListener('input', (e) => {
+                group.name = e.target.value;
+                saveLocalState();
+                renderSidebar();
+            });
+            container.querySelector('#inp-g-id').addEventListener('change', (e) => {
+                group.id = e.target.value.trim().replace(/\s+/g, '_') || ('shared_g_' + Date.now());
+                renderAll();
+            });
+
+            renderSlotsSection(group, container.querySelector('#slots-container'));
+            container.querySelector('#btn-add-slot').addEventListener('click', () => {
+                if (!Array.isArray(group.requiredTags)) group.requiredTags = [];
+                const nextNum = group.requiredTags.length + 1;
+                group.requiredTags.push({
+                    slotId: `SLOT_${nextNum}_${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
+                    label: `Nouvelle Étiquette #${nextNum}`,
+                    suggestedColor: '#6366f1'
+                });
+                renderAll();
+            });
+
+            renderRulesSection(group, container.querySelector('#rules-container'));
+            container.querySelector('#btn-add-rule').addEventListener('click', () => {
+                if (!Array.isArray(group.rules)) group.rules = [];
+                const defaultSlot = group.requiredTags?.[0]?.slotId || '';
+                group.rules.push({
+                    id: 'sr_' + Date.now(),
+                    name: `Règle #${group.rules.length + 1}`,
+                    tagSlotId: defaultSlot,
+                    rootGroup: {
+                        logic: 'AND',
+                        children: [{ type: 'condition', field: 'title', operator: 'contains', value: '' }]
+                    }
+                });
+                renderAll();
+            });
+        }
+
+        function renderSlotsSection(group, slotsContainer) {
+            if (!Array.isArray(group.requiredTags)) group.requiredTags = [];
+            if (group.requiredTags.length === 0) {
+                slotsContainer.innerHTML = `<div style="color:var(--text-muted);font-size:12px;">Aucun slot défini. Créez au moins un slot pour pouvoir l'assigner à vos règles.</div>`;
+                return;
+            }
+
+            slotsContainer.innerHTML = group.requiredTags.map((slot, sIdx) => `
+                <div class="slot-card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                        <input type="text" data-slot-id="${sIdx}" class="wm-input" value="${escapeHtml(slot.slotId)}" style="font-family:monospace;font-weight:800;font-size:11px;color:#a5b4fc;padding:4px 8px;width:150px;" title="Identifiant technique du slot">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <input type="color" data-slot-color="${sIdx}" value="${escapeHtml(slot.suggestedColor || '#6366f1')}" style="width:30px;height:28px;border:none;border-radius:6px;background:transparent;cursor:pointer;">
+                            <button type="button" class="wm-btn danger" data-slot-del="${sIdx}" style="padding:4px 8px;font-size:11px;">✕</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label style="font-size:10px;color:var(--text-muted);">Description affichée à l'abonné :</label>
+                        <input type="text" data-slot-label="${sIdx}" class="wm-input" value="${escapeHtml(slot.label || '')}" placeholder="Ex: Tag pour les Villes" style="width:100%;margin-top:3px;font-weight:600;">
+                    </div>
+                </div>
+            `).join('');
+
+            slotsContainer.querySelectorAll('[data-slot-id]').forEach(inp => {
+                inp.addEventListener('change', () => {
+                    const sIdx = Number(inp.dataset.slotId);
+                    const oldId = group.requiredTags[sIdx].slotId;
+                    const newId = inp.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_') || oldId;
+                    group.requiredTags[sIdx].slotId = newId;
+                    (group.rules || []).forEach(r => {
+                        if (r.tagSlotId === oldId) r.tagSlotId = newId;
+                    });
+                    renderAll();
+                });
+            });
+
+            slotsContainer.querySelectorAll('[data-slot-label]').forEach(inp => {
+                inp.addEventListener('input', () => {
+                    const sIdx = Number(inp.dataset.slotLabel);
+                    group.requiredTags[sIdx].label = inp.value;
+                    saveLocalState();
+                });
+            });
+
+            slotsContainer.querySelectorAll('[data-slot-color]').forEach(inp => {
+                inp.addEventListener('input', () => {
+                    const sIdx = Number(inp.dataset.slotColor);
+                    group.requiredTags[sIdx].suggestedColor = inp.value;
+                    saveLocalState();
+                });
+            });
+
+            slotsContainer.querySelectorAll('[data-slot-del]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const sIdx = Number(btn.dataset.slotDel);
+                    group.requiredTags.splice(sIdx, 1);
+                    renderAll();
+                });
+            });
+        }
+
+        function renderRulesSection(group, rulesContainer) {
+            if (!Array.isArray(group.rules) || group.rules.length === 0) {
+                rulesContainer.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:18px;">Aucune règle dans ce groupe. Cliquez sur "➕ Ajouter une Règle".</div>`;
+                return;
+            }
+
+            rulesContainer.innerHTML = '';
+            group.rules.forEach((rule, rIdx) => {
+                rule.rootGroup = normalizeGroupNode(rule.rootGroup);
+                const card = document.createElement('div');
+                card.className = 'rule-card';
+
+                const slotObj = (group.requiredTags || []).find(s => s.slotId === rule.tagSlotId);
+                const badgeColor = slotObj?.suggestedColor || '#6366f1';
+
+                const topRow = document.createElement('div');
+                topRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;';
+                topRow.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:240px;">
+                        <span style="font-weight:800;color:#94a3b8;">#${rIdx + 1}</span>
+                        <input type="text" class="wm-input rule-name-inp" value="${escapeHtml(rule.name || '')}" placeholder="Nom de la règle (ex: Détection Ville)..." style="flex:1;font-weight:700;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:11px;font-weight:700;color:var(--text-muted);">SLOT CIBLE →</span>
+                        <select class="wm-select rule-slot-sel" style="font-weight:700;border-left:4px solid ${escapeHtml(badgeColor)};">
+                            <option value="">⚠️ Choisir un Slot Générique...</option>
+                            ${(group.requiredTags || []).map(s => `
+                                <option value="${escapeHtml(s.slotId)}" ${rule.tagSlotId === s.slotId ? 'selected' : ''}>
+                                    [${escapeHtml(s.slotId)}]${escapeHtml(s.label)}
+                                </option>
+                            `).join('')}
+                        </select>
+                        <button type="button" class="wm-btn ghost rule-dup-btn" style="padding:6px 10px;" title="Dupliquer la règle">📄</button>
+                        <button type="button" class="wm-btn danger rule-del-btn" style="padding:6px 10px;" title="Supprimer la règle">🗑️</button>
+                    </div>
+                `;
+
+                topRow.querySelector('.rule-name-inp').addEventListener('input', (e) => {
+                    rule.name = e.target.value;
+                    saveLocalState();
+                });
+                topRow.querySelector('.rule-slot-sel').addEventListener('change', (e) => {
+                    rule.tagSlotId = e.target.value;
+                    renderAll();
+                });
+                topRow.querySelector('.rule-dup-btn').addEventListener('click', () => {
+                    const copy = JSON.parse(JSON.stringify(rule));
+                    copy.id = 'sr_' + Date.now();
+                    copy.name = (rule.name || 'Règle') + ' (Copie)';
+                    group.rules.splice(rIdx + 1, 0, copy);
+                    renderAll();
+                });
+                topRow.querySelector('.rule-del-btn').addEventListener('click', () => {
+                    if (confirm(`Supprimer la règle "${rule.name}" ?`)) {
+                        group.rules.splice(rIdx, 1);
+                        renderAll();
+                    }
+                });
+
+                card.appendChild(topRow);
+                card.appendChild(createGroupDom(rule.rootGroup, null, null));
+                rulesContainer.appendChild(card);
+            });
+        }
+
+        function createGroupDom(groupNode, parentGroup, idxInParent) {
+            const wrap = document.createElement('div');
+            const isOr = (groupNode.logic || 'AND').toUpperCase() === 'OR';
+            wrap.className = `wm-rb-group ${isOr ? 'logic-or' : ''}`;
+
+            const bar = document.createElement('div');
+            bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;';
+
+            bar.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div class="wm-rb-logic-toggle">
+                        <button type="button" class="wm-rb-logic-btn ${!isOr ? 'active-and' : ''}" data-logic="AND">ET (AND)</button>
+                        <button type="button" class="wm-rb-logic-btn ${isOr ? 'active-or' : ''}" data-logic="OR">OU (OR)</button>
+                    </div>
+                    <span style="font-size:11px;color:var(--text-muted);">${parentGroup ? 'Sous-groupe ( ... )' : 'Groupe racine'}</span>
+                </div>
+                <div style="display:flex;gap:6px;">
+                    <button type="button" class="wm-btn ghost btn-add-cond" style="padding:4px 10px;font-size:11px;">+ Condition</button>
+                    <button type="button" class="wm-btn ghost btn-add-sub" style="padding:4px 10px;font-size:11px;color:#fcd34d;">+ Sous-groupe</button>
+                    ${parentGroup ? `<button type="button" class="wm-btn danger btn-del-sub" style="padding:4px 8px;font-size:11px;">🗑️ Groupe</button>` : ''}
+                </div>
+            `;
+
+            bar.querySelectorAll('[data-logic]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    groupNode.logic = btn.dataset.logic;
+                    renderAll();
+                });
+            });
+
+            bar.querySelector('.btn-add-cond').addEventListener('click', () => {
+                groupNode.children.push({ type: 'condition', field: 'title', operator: 'contains', value: '' });
+                renderAll();
+            });
+
+            bar.querySelector('.btn-add-sub').addEventListener('click', () => {
+                groupNode.children.push({
+                    type: 'group',
+                    logic: isOr ? 'AND' : 'OR',
+                    children: [{ type: 'condition', field: 'title', operator: 'contains', value: '' }]
+                });
+                renderAll();
+            });
+
+            if (parentGroup) {
+                bar.querySelector('.btn-del-sub').addEventListener('click', () => {
+                    parentGroup.children.splice(idxInParent, 1);
+                    if (parentGroup.children.length === 0) {
+                        parentGroup.children.push({ type: 'condition', field: 'title', operator: 'contains', value: '' });
+                    }
+                    renderAll();
+                });
+            }
+
+            wrap.appendChild(bar);
+
+            const childrenBox = document.createElement('div');
+            childrenBox.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+            groupNode.children.forEach((child, cIdx) => {
+                if (cIdx > 0) {
+                    const div = document.createElement('div');
+                    div.className = `wm-rb-divider ${isOr ? 'or' : ''}`;
+                    div.textContent = isOr ? 'OU' : 'ET';
+                    childrenBox.appendChild(div);
+                }
+                if (child.type === 'group' || Array.isArray(child.children)) {
+                    childrenBox.appendChild(createGroupDom(child, groupNode, cIdx));
+                } else {
+                    childrenBox.appendChild(createCondDom(child, groupNode, cIdx));
+                }
+            });
+
+            wrap.appendChild(childrenBox);
+            return wrap;
+        }
+
+        function createCondDom(cond, parentGroup, idxInParent) {
+            const row = document.createElement('div');
+            row.className = 'wm-rb-cond-row';
+
+            const fieldSel = document.createElement('select');
+            fieldSel.className = 'wm-select';
+            Object.entries(RULE_FIELDS).forEach(([k, meta]) => {
+                const opt = document.createElement('option');
+                opt.value = k;
+                opt.textContent = meta.label;
+                if (cond.field === k) opt.selected = true;
+                fieldSel.appendChild(opt);
+            });
+            fieldSel.addEventListener('change', () => {
+                cond.field = fieldSel.value;
+                const fType = RULE_FIELDS[cond.field]?.type;
+                cond.operator = fType === 'string' ? 'contains' : (fType === 'enum' ? '=' : '>');
+                cond.value = fType === 'enum' ? 'C' : (fType === 'number' ? 100 : '');
+                renderAll();
+            });
+
+            const fMeta = RULE_FIELDS[cond.field] || { type: 'string' };
+            let ops = ['>', '>=', '<', '<=', '=', '!='];
+            if (fMeta.type === 'string') ops = ['contains', 'not_contains', '=', '!='];
+            if (fMeta.type === 'enum') ops = ['=', '!='];
+
+            const opSel = document.createElement('select');
+            opSel.className = 'wm-select';
+            ops.forEach(op => {
+                const opt = document.createElement('option');
+                opt.value = op;
+                opt.textContent = OPERATOR_LABELS[op] || op;
+                if (cond.operator === op) opt.selected = true;
+                opSel.appendChild(opt);
+            });
+            opSel.addEventListener('change', () => {
+                cond.operator = opSel.value;
+                renderAll();
+            });
+
+            row.appendChild(fieldSel);
+            row.appendChild(opSel);
+
+            const usesChips = fMeta.type === 'string' && (cond.operator === 'contains' || cond.operator === 'not_contains');
+
+            if (fMeta.type === 'enum') {
+                const valSel = document.createElement('select');
+                valSel.className = 'wm-select';
+                (fMeta.values || []).forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    if (String(cond.value) === v) opt.selected = true;
+                    valSel.appendChild(opt);
+                });
+                valSel.addEventListener('change', () => {
+                    cond.value = valSel.value;
+                    saveLocalState();
+                });
+                row.appendChild(valSel);
+            } else if (usesChips) {
+                const chipsBox = document.createElement('div');
+                chipsBox.className = 'wm-rb-chips-box';
+                const interactive = document.createElement('div');
+                interactive.className = 'wm-rb-chips-interactive';
+
+                const parseTerms = (s) => String(s || '').split(';').map(x => x.trim()).filter(Boolean);
+
+                const rebuildChips = () => {
+                    interactive.innerHTML = '';
+                    const terms = parseTerms(cond.value);
+                    terms.forEach((t, tIdx) => {
+                        const chip = document.createElement('span');
+                        chip.className = 'wm-rb-chip';
+                        chip.innerHTML = `<span>${escapeHtml(t)}</span><button type="button" title="Retirer">✕</button>`;
+                        chip.querySelector('button').addEventListener('click', () => {
+                            const cur = parseTerms(cond.value);
+                            cur.splice(tIdx, 1);
+                            cond.value = cur.join('; ');
+                            saveLocalState();
+                            rebuildChips();
+                        });
+                        interactive.appendChild(chip);
+                    });
+
+                    const inp = document.createElement('input');
+                    inp.type = 'text';
+                    inp.className = 'wm-rb-chip-input';
+                    inp.placeholder = terms.length === 0 ? 'Tapez un terme puis ";" ou Entrée...' : 'Ajouter (; ou Entrée)...';
+
+                    const commit = () => {
+                        const raw = inp.value.trim();
+                        if (!raw) return;
+                        const cur = parseTerms(cond.value);
+                        parseTerms(raw).forEach(tok => {
+                            if (!cur.some(c => c.toLowerCase() === tok.toLowerCase())) cur.push(tok);
+                        });
+                        cond.value = cur.join('; ');
+                        saveLocalState();
+                        rebuildChips();
+                        interactive.querySelector('input')?.focus();
+                    };
+
+                    inp.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter' || e.key === ';') {
+                            e.preventDefault();
+                            commit();
+                        } else if (e.key === 'Backspace' && inp.value === '') {
+                            const cur = parseTerms(cond.value);
+                            if (cur.length > 0) {
+                                cur.pop();
+                                cond.value = cur.join('; ');
+                                saveLocalState();
+                                rebuildChips();
+                                interactive.querySelector('input')?.focus();
+                            }
+                        }
+                    });
+                    inp.addEventListener('blur', commit);
+                    interactive.appendChild(inp);
+                };
+
+                rebuildChips();
+                chipsBox.appendChild(interactive);
+                row.appendChild(chipsBox);
+            } else {
+                const inp = document.createElement('input');
+                inp.type = fMeta.type === 'number' ? 'number' : 'text';
+                inp.className = 'wm-input';
+                inp.style.flex = '1';
+                inp.value = String(cond.value ?? '');
+                inp.addEventListener('input', () => {
+                    cond.value = fMeta.type === 'number' ? Number(inp.value) : inp.value;
+                    saveLocalState();
+                });
+                row.appendChild(inp);
+            }
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'wm-btn danger';
+            delBtn.style.padding = '6px 10px';
+            delBtn.textContent = '✕';
+            delBtn.addEventListener('click', () => {
+                parentGroup.children.splice(idxInParent, 1);
+                if (parentGroup.children.length === 0) {
+                    parentGroup.children.push({ type: 'condition', field: 'title', operator: 'contains', value: '' });
+                }
+                renderAll();
+            });
+            row.appendChild(delBtn);
+
+            return row;
+        }
+
+        // ============================================================
+        // ÉCOUTEURS DES BOUTONS GLOBAUX
+        // ============================================================
+        function bindGlobalButtons() {
+            document.getElementById('btn-add-group').addEventListener('click', () => {
+                const idx = state.groups.length + 1;
+                state.groups.push({
+                    id: `shared_g_${Date.now()}`,
+                    name: `Nouveau Groupe Partagé #${idx}`,
+                    emoji: '📁',
+                    requiredTags: [
+                        { slotId: 'SLOT_MAIN', label: 'Étiquette Principale', suggestedColor: '#6366f1' }
+                    ],
+                    rules: []
+                });
+                activeGroupIndex = state.groups.length - 1;
+                renderAll();
+                showToast('📁 Nouveau groupe créé !');
+            });
+
+            const modalImport = document.getElementById('modal-import');
+            document.getElementById('btn-open-import').addEventListener('click', () => {
+                modalImport.style.display = 'flex';
+            });
+            document.getElementById('btn-close-import').addEventListener('click', () => {
+                modalImport.style.display = 'none';
+            });
+
+            document.getElementById('btn-confirm-import').addEventListener('click', () => {
+                try {
+                    const raw = document.getElementById('import-textarea').value.trim();
+                    if (!raw) throw new Error('Le champ JSON est vide.');
+                    const parsed = JSON.parse(raw);
+                    const inputGroups = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.groups) ? parsed.groups : [parsed]);
+
+                    const PALETTE = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#3b82f6', '#a855f7'];
+                    let importedCount = 0;
+
+                    inputGroups.forEach((ig, gOffset) => {
+                        if (!ig || typeof ig !== 'object') return;
+                        const requiredTags = Array.isArray(ig.requiredTags) ? [...ig.requiredTags] : [];
+                        const oldTagToSlot = new Map();
+
+                        const cleanedRules = (ig.rules || []).map((r, rIdx) => {
+                            let slotId = r.tagSlotId || '';
+                            if (!slotId) {
+                                const origKey = r.tagId && r.tagId.trim() !== '' ? r.tagId : `RULE_${rIdx + 1}`;
+                                if (!oldTagToSlot.has(origKey)) {
+                                    const slotNum = requiredTags.length + 1;
+                                    const newSlotId = `GENERIC_TAG_${slotNum}`;
+                                    oldTagToSlot.set(origKey, newSlotId);
+                                    requiredTags.push({
+                                        slotId: newSlotId,
+                                        label: r.name ? `Tag pour "${r.name}"` : `Étiquette générique #${slotNum}`,
+                                        suggestedColor: PALETTE[(slotNum - 1) % PALETTE.length]
+                                    });
+                                }
+                                slotId = oldTagToSlot.get(origKey);
+                            }
+                            return {
+                                id: r.id || `sr_${Date.now()}_${rIdx}`,
+                                name: r.name || `Règle #${rIdx + 1}`,
+                                tagSlotId: slotId,
+                                rootGroup: normalizeGroupNode(r.rootGroup)
+                            };
+                        });
+
+                        state.groups.push({
+                            id: ig.id && String(ig.id).startsWith('shared_') ? ig.id : `shared_g_${Date.now()}_${gOffset}`,
+                            name: ig.name || 'Groupe Importé',
+                            emoji: ig.emoji || '📁',
+                            requiredTags,
+                            rules: cleanedRules
+                        });
+                        importedCount++;
+                    });
+
+                    activeGroupIndex = Math.max(0, state.groups.length - 1);
+                    modalImport.style.display = 'none';
+                    document.getElementById('import-textarea').value = '';
+                    renderAll();
+                    showToast(`✅ ${importedCount} groupe(s) importé(s) et nettoyé(s) !`);
+                } catch (e) {
+                    alert('Erreur JSON : ' + e.message);
+                }
+            });
+
+            const modalJson = document.getElementById('modal-json');
+            document.getElementById('btn-open-json').addEventListener('click', () => {
+                saveLocalState();
+                document.getElementById('json-preview-ta').value = JSON.stringify(state, null, 2);
+                document.getElementById('gist-updated-label').textContent = `Dernière modification : ${state.updatedAt}`;
+                modalJson.style.display = 'flex';
+            });
+            document.getElementById('btn-close-json').addEventListener('click', () => {
+                modalJson.style.display = 'none';
+            });
+            document.getElementById('btn-copy-json').addEventListener('click', () => {
+                const ta = document.getElementById('json-preview-ta');
+                ta.select();
+                navigator.clipboard?.writeText(ta.value);
+                showToast('📋 JSON copié dans le presse-papier !');
+            });
+
+            document.getElementById('btn-load-gist').addEventListener('click', async () => {
+                const cfg = saveGistConfig();
+                if (!cfg.gistId) {
+                    showToast('⚠️ Veuillez entrer un Gist ID pour charger.', true);
+                    return;
+                }
+                const btn = document.getElementById('btn-load-gist');
+                btn.disabled = true;
+                btn.textContent = '⏳ Chargement...';
+                try {
+                    const headers = { 'Accept': 'application/vnd.github+json' };
+                    if (cfg.pat) headers['Authorization'] = `Bearer ${cfg.pat}`;
+
+                    const res = await fetch(`https://api.github.com/gists/${encodeURIComponent(cfg.gistId)}`, { headers });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+
+                    const fileObj = data.files[cfg.filename] || Object.values(data.files)[0];
+                    if (!fileObj || !fileObj.content) throw new Error('Aucun fichier JSON trouvé dans ce Gist.');
+
+                    const parsed = JSON.parse(fileObj.content);
+                    if (!parsed || !Array.isArray(parsed.groups)) throw new Error('Format JSON non reconnu (propriété "groups" manquante).');
+
+                    state = parsed;
+                    activeGroupIndex = 0;
+                    renderAll();
+                    showToast(`📥 Gist chargé avec succès (${state.groups.length} groupes) !`);
+                } catch (e) {
+                    showToast(`❌ Erreur chargement Gist : ${e.message}`, true);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '📥 Charger du Gist';
+                }
+            });
+
+            document.getElementById('btn-save-gist').addEventListener('click', async () => {
+                const cfg = saveGistConfig();
+                if (!cfg.pat) {
+                    showToast('⚠️ Un GitHub Personal Access Token (PAT) est requis pour sauvegarder.', true);
+                    return;
+                }
+                const btn = document.getElementById('btn-save-gist');
+                btn.disabled = true;
+                btn.textContent = '⏳ Publication...';
+
+                try {
+                    saveLocalState();
+                    const payload = {
+                        description: 'WikiM — Catalogue de Groupes de Règles Partagées',
+                        public: false,
+                        files: {
+                            [cfg.filename]: {
+                                content: JSON.stringify(state, null, 2)
+                            }
+                        }
+                    };
+
+                    const url = cfg.gistId
+                        ? `https://api.github.com/gists/${encodeURIComponent(cfg.gistId)}`
+                        : `https://api.github.com/gists`;
+                    const method = cfg.gistId ? 'PATCH' : 'POST';
+
+                    const res = await fetch(url, {
+                        method,
+                        headers: {
+                            'Accept': 'application/vnd.github+json',
+                            'Authorization': `Bearer ${cfg.pat}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!res.ok) {
+                        const errTxt = await res.text();
+                        throw new Error(`HTTP ${res.status} — ${errTxt.slice(0, 120)}`);
+                    }
+
+                    const result = await res.json();
+                    if (result.id && result.id !== cfg.gistId) {
+                        document.getElementById('cfg-gist-id').value = result.id;
+                        saveGistConfig();
+                    }
+                    showToast(`💾 Publié sur le Gist (${result.id}) avec succès !`);
+                } catch (e) {
+                    showToast(`❌ Échec publication Gist : ${e.message}`, true);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '💾 Publier sur le Gist';
+                }
+            });
+        }
+
+        // Démarrage sécurisé
+        try {
+            loadLocalState();
+            bindGlobalButtons();
+            renderAll();
+            const statusPill = document.getElementById('js-status-pill');
+            if (statusPill) {
+                statusPill.textContent = '🟢 JS Actif';
+                statusPill.classList.add('ready');
+            }
+        } catch (err) {
+            console.error('Erreur initialisation Dashboard :', err);
+            alert('Erreur lors du démarrage du script : ' + err.message);
+        }
+    })();
+    </script>
+</body>
+</html>
