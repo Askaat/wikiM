@@ -96,10 +96,14 @@
 
             <div class="wm-tab-content hidden" data-tab="bulk">
                 <div>
-                    <div class="wm-section-title">Panier Bulk Delete</div>
+                    <div class="wm-section-title" id="wm-bulk-section-title">Panier Bulk Delete</div>
                     <div id="wm-bulk-list-container"></div>
+                    <div style="display:flex; gap:6px; margin-bottom: 6px;">
+                        <button id="wm-bulk-page-btn" class="wm-panel-btn danger" style="flex:1;" disabled>🔥 Défausser la page (0)</button>
+                    </div>
                     <div style="display:flex; gap:6px;">
                         <button id="wm-bulk-exec-btn" class="wm-panel-btn danger" style="flex:1;">Tout Défausser</button>
+                        <button id="wm-bulk-clean-btn" class="wm-panel-btn" title="Vérifier et nettoyer les cartes fantômes déjà supprimées du jeu" style="padding:4px 8px; font-size:11px;">🧹 Nettoyer</button>
                         <button id="wm-bulk-clear-btn" class="wm-panel-btn ghost">Vider</button>
                     </div>
                 </div>
@@ -380,9 +384,127 @@
             });
         });
 
-        document.getElementById('wm-bulk-exec-btn').addEventListener('click', async () => {
+        const bulkPageBtn = document.getElementById('wm-bulk-page-btn');
+        if (bulkPageBtn) {
+            bulkPageBtn.addEventListener('click', async () => {
+                const btn = document.getElementById('wm-bulk-page-btn');
+                if (!btn || btn.disabled) return;
+
+                const cardsEl = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative');
+                if (cardsEl.length === 0) return;
+
+                const bulkList = window.getBulkList();
+                const bulkMap = new Map();
+                bulkList.forEach(item => {
+                    if (typeof item === 'object' && (item.user_card_id || item.userCardId) && item.title) {
+                        const t = item.title.replace(/\s+/g, ' ').trim();
+                        if (!bulkMap.has(t)) bulkMap.set(t, []);
+                        bulkMap.get(t).push(item.user_card_id || item.userCardId);
+                    }
+                });
+
+                const pageUserCardIds = [];
+                cardsEl.forEach(card => {
+                    const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+                    if (titleEl) {
+                        const title = titleEl.textContent.replace(/\s+/g, ' ').trim();
+                        const availableIds = bulkMap.get(title);
+                        if (availableIds && availableIds.length > 0) pageUserCardIds.push(availableIds.shift());
+                    }
+                });
+
+                if (pageUserCardIds.length === 0) {
+                    window.logToPanel(`❌ Erreur: Impossible de faire correspondre les cartes à l'écran avec le cache Bulk.`);
+                    return;
+                }
+
+                if (!confirm(`🔥 SÉCURITÉ : Défausser définitivement ces ${pageUserCardIds.length} cartes visibles ?`)) return;
+
+                window.logToPanel(`🚀 Bulk Delete (Page) : ${pageUserCardIds.length} cartes...`);
+                btn.disabled = true;
+                btn.textContent = "⏳ Exécution...";
+
+                const result = await window.executeBulkDiscard(pageUserCardIds);
+
+                if (result && result.success !== false) {
+                    const failedIds = new Set((result.failed || []).map(f => f.card_id || f.id));
+
+                    if (failedIds.size > 0) {
+                        window.logToPanel(`⚠️ Partiel : ${result.count} défaussées, ${failedIds.size} erreurs.`);
+                        window.showWMToast(`${result.count} défaussées, ${failedIds.size} erreurs !`, false);
+                    } else {
+                        window.logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
+                        window.showWMToast(`Page défaussée ! +${result.count} WB`, true);
+                    }
+
+                    const newBulkList = bulkList.filter(item => {
+                        const uId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
+                        if (uId) {
+                            const wasInBatch = pageUserCardIds.includes(uId);
+                            const hasFailed = failedIds.has(uId);
+                            if (wasInBatch && !hasFailed) return false;
+                        }
+                        return true;
+                    });
+
+                    window.saveBulkList(newBulkList);
+                    if (typeof result.balance === 'number') window.recordBalance(result.balance, 'bulk_discard');
+
+                    const searchInput = document.querySelector('input[placeholder*="titre"]');
+                    if (searchInput) searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+                } else {
+                    window.logToPanel(`❌ Échec API lors de la défausse de la page.`);
+                    window.showWMToast("Erreur API lors de la défausse.", false);
+                }
+
+                if (typeof window.updateBulkUI === 'function') window.updateBulkUI();
+                if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
+
+                setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = "🔥 Défausser la page"; } }, 500);
+            });
+        }
+
+        const bulkCleanBtn = document.getElementById('wm-bulk-clean-btn');
+        if (bulkCleanBtn) {
+            bulkCleanBtn.addEventListener('click', async () => {
+                bulkCleanBtn.disabled = true;
+                bulkCleanBtn.textContent = '⏳ Scan...';
+                try {
+                    if (typeof window.wmCleanBulkList === 'function') {
+                        await window.wmCleanBulkList();
+                    }
+                } finally {
+                    bulkCleanBtn.disabled = false;
+                    bulkCleanBtn.textContent = '🧹 Nettoyer';
+                }
+            });
+        }
+
+        const bulkExecBtn = document.getElementById('wm-bulk-exec-btn');
+        bulkExecBtn.addEventListener('click', async () => {
+            // Si une défausse est déjà en cours, sert de bouton Arrêter
+            if (window._wmBulkDiscardRunning) {
+                window._wmCancelBulkDiscard = true;
+                bulkExecBtn.textContent = "⏳ Arrêt...";
+                bulkExecBtn.disabled = true;
+                window.logToPanel("⏹️ Demande d'arrêt de la défausse...");
+                return;
+            }
+
             const list = window.getBulkList();
             if (list.length === 0) return;
+
+            // SÉCURITÉ DE CONFIRMATION
+            if (!confirm(`🔥 SÉCURITÉ : Défausser définitivement TOUT le bulk (${list.length} cartes) ?\n\n⚠️ Cette action est irréversible et supprimera toutes ces cartes de votre compte.`)) {
+                return;
+            }
+
+            window._wmBulkDiscardRunning = true;
+            window._wmCancelBulkDiscard = false;
+            bulkExecBtn.textContent = "⏹️ Arrêter";
+            bulkExecBtn.classList.remove('danger');
+            bulkExecBtn.style.background = "#e11d48";
+            bulkExecBtn.style.color = "#ffffff";
 
             window.logToPanel(`🚀 Lancement Bulk Delete (${list.length} cartes)...`);
 
@@ -391,70 +513,83 @@
             let resolvedFromIndex = 0;
             let resolvedFromApi = 0;
 
-            // ---- Phase 1 : résolution des user_card_id ----
-            for (const item of list) {
-                const title = typeof item === 'string' ? item : item.title;
-                const cardId = typeof item === 'object' ? item.id : null;
-                let userCardId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
+            try {
+                // ---- Phase 1 : résolution des user_card_id ----
+                for (const item of list) {
+                    if (window._wmCancelBulkDiscard) break;
 
-                // Si déjà résolu (ajouté avec succès via toggleBulkForCard ou pack)
-                if (userCardId) {
-                    readyToDelete.push({ title, userCardId, cardId });
-                    resolvedFromIndex++;
-                    continue;
-                }
+                    const title = typeof item === 'string' ? item : item.title;
+                    const cardId = typeof item === 'object' ? item.id : null;
+                    let userCardId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
 
-                // Sinon, tente la résolution
-                userCardId = await window.wmResolveUserCardId(cardId, title);
-
-                if (userCardId) {
-                    readyToDelete.push({ title, userCardId, cardId });
-                    resolvedFromApi++;
-                } else {
-                    window.logToPanel(`⚠️ "${title}" — impossible de résoudre user_card_id`);
-                    remainingList.push({ title, id: cardId, userCardId: null });
-                }
-            }
-
-            window.logToPanel(`🔎 Résolution : ${resolvedFromIndex} depuis l'index, ${resolvedFromApi} via API, ${remainingList.length} échecs`);
-
-            // ---- Phase 2 : appel bulk delete ----
-            if (readyToDelete.length > 0) {
-                window.logToPanel(`[API] ⚡ Exécution globale (${readyToDelete.length} cartes)...`);
-                const userCardIds = readyToDelete.map(item => item.userCardId);
-                const result = await window.executeBulkDiscard(userCardIds);
-
-                if (result && result.success) {
-                    window.logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
-                    window.showWMToast(`Suppression réussie ! +${result.count} WB`, true);
-
-                    for (const item of readyToDelete) {
-                        window.markCardAsProcessedByTitle(item.title);
-                        if (typeof window.userCardIdCache !== 'undefined') window.userCardIdCache.delete(item.title);
-                        if (window.wmInventoryMap) delete window.wmInventoryMap[item.title];
+                    // Si déjà résolu (ajouté avec succès via toggleBulkForCard ou pack)
+                    if (userCardId) {
+                        readyToDelete.push({ title, userCardId, cardId });
+                        resolvedFromIndex++;
+                        continue;
                     }
 
-                    // Met à jour le solde si dispo
-                    if (typeof result.balance === 'number') {
-                        window.recordBalance(result.balance, 'bulk_discard');
-                    }
-                } else {
-                    window.logToPanel(`[API] ❌ Échec de la requête (status ${result?.status || 'inconnu'})`);
-                    window.showWMToast("Erreur API lors de la défausse groupée.", false);
-                    // Remet les cartes en attente
-                    readyToDelete.forEach(item => remainingList.push({
-                        title: item.title, id: item.cardId, userCardId: item.userCardId
-                    }));
-                }
-            } else {
-                window.logToPanel(`❌ Aucune carte valide prête à être défaussée.`);
-            }
+                    // Sinon, tente la résolution
+                    userCardId = await window.wmResolveUserCardId(cardId, title);
 
-            // ---- Phase 3 : nettoyage ----
-            window.saveBulkList(remainingList);
-            window.updateBulkUI();
-            window.logToPanel(`🏁 Bulk terminé. ${remainingList.length} restante(s).`);
-            if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
+                    if (userCardId) {
+                        readyToDelete.push({ title, userCardId, cardId });
+                        resolvedFromApi++;
+                    } else {
+                        window.logToPanel(`⚠️ "${title}" — impossible de résoudre user_card_id`);
+                        remainingList.push({ title, id: cardId, userCardId: null });
+                    }
+                }
+
+                window.logToPanel(`🔎 Résolution : ${resolvedFromIndex} depuis l'index, ${resolvedFromApi} via API, ${remainingList.length} échecs`);
+
+                // ---- Phase 2 : appel bulk delete ----
+                if (readyToDelete.length > 0 && !window._wmCancelBulkDiscard) {
+                    window.logToPanel(`[API] ⚡ Exécution globale (${readyToDelete.length} cartes)...`);
+                    const userCardIds = readyToDelete.map(item => item.userCardId);
+                    const result = await window.executeBulkDiscard(userCardIds);
+
+                    if (result && result.success) {
+                        window.logToPanel(`✅ Succès : ${result.count} défaussées (solde : ${result.balance ?? '?'} WB)`);
+                        window.showWMToast(`Suppression terminée ! +${result.count} WB`, true);
+
+                        for (const item of readyToDelete) {
+                            window.markCardAsProcessedByTitle(item.title);
+                            if (typeof window.userCardIdCache !== 'undefined') window.userCardIdCache.delete(item.title);
+                            if (window.wmInventoryMap) delete window.wmInventoryMap[item.title];
+                        }
+
+                        // Met à jour le solde si dispo
+                        if (typeof result.balance === 'number') {
+                            window.recordBalance(result.balance, 'bulk_discard');
+                        }
+                    } else {
+                        window.logToPanel(`[API] ❌ Échec de la requête (status ${result?.status || 'inconnu'})`);
+                        window.showWMToast("Erreur API lors de la défausse groupée.", false);
+                    }
+                } else if (!window._wmCancelBulkDiscard) {
+                    window.logToPanel(`❌ Aucune carte valide prête à être défaussée.`);
+                }
+            } finally {
+                window._wmBulkDiscardRunning = false;
+                window._wmCancelBulkDiscard = false;
+                bulkExecBtn.textContent = "Tout Défausser";
+                bulkExecBtn.classList.add('danger');
+                bulkExecBtn.style.background = "";
+                bulkExecBtn.style.color = "";
+                bulkExecBtn.disabled = false;
+
+                // ---- Phase 3 : rafraîchissement ----
+                if (typeof window.updateBulkUI === 'function') window.updateBulkUI();
+                if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
+                const curLeft = window.getBulkList();
+                window.logToPanel(`🏁 Bulk terminé. ${curLeft.length} restante(s).`);
+
+                const searchInput = document.querySelector('input[placeholder*="titre"], input[placeholder*="echerche"], input[type="search"]');
+                if (searchInput && searchInput.value.includes('[WM-BULK]')) {
+                    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
         });
         document.getElementById('wm-search-btn').addEventListener('click', async () => {
             const uuid = document.getElementById('wm-card-id-input').value.trim();

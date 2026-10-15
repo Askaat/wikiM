@@ -13,35 +13,77 @@
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
         // ==========================================
+        // 0. TOUCHE ÉCHAP (Fermer modal de carte)
+        // ==========================================
+        if (e.key === 'Escape') {
+            const modal = typeof window.getOpenCardModal === 'function' ? window.getOpenCardModal() : null;
+            if (modal) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof window.closeCardModal === 'function') {
+                    window.closeCardModal();
+                }
+                return;
+            }
+        }
+
+        /**
+         * Attend que le bouton bulk soit présent et actif sur une carte avec polling (jusqu'à 1.5s max)
+         */
+        function clickBulkWithRetry(getCardFn, onDone) {
+            let attempts = 0;
+            const maxAttempts = 30; // 30 * 50ms = 1500ms
+            const interval = setInterval(() => {
+                attempts++;
+                const card = getCardFn();
+                if (card) {
+                    let bulkBtn = card.querySelector('.wm-btn-bulk');
+                    // Si le bouton n'a pas encore été injecté, tenter d'injecter immédiatement
+                    if (!bulkBtn && typeof window.injectBoosterButtons === 'function') {
+                        window.injectBoosterButtons();
+                        bulkBtn = card.querySelector('.wm-btn-bulk');
+                    }
+                    if (bulkBtn && !bulkBtn.disabled) {
+                        clearInterval(interval);
+                        console.log(`[WM-Debug] 🟢 Clic sur Bulk effectué après ${attempts * 50}ms.`);
+                        bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                        if (typeof onDone === 'function') onDone(true);
+                        return;
+                    }
+                }
+                if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    console.warn("[WM-Debug] ⚠️ Timeout : Bouton Bulk non trouvé ou désactivé sur la carte.");
+                    if (typeof onDone === 'function') onDone(false);
+                }
+            }, 50);
+        }
+
+        // ==========================================
         // 1. RACCOURCI "I" (Bulk Delete & Auto-Next)
         // ==========================================
         if (e.key.toLowerCase() === 'i') {
             e.preventDefault();
-            const targetCard = document.querySelector('.w-72:hover') || document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72');
 
-            if (targetCard) {
-                const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
-                if (bulkBtn && !bulkBtn.disabled) {
-                    console.log("[WM-Debug] 🟢 Clic sur Bulk effectué.");
-                    bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            clickBulkWithRetry(
+                () => document.querySelector('.w-72:hover') || document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72'),
+                () => {
+                    // Une fois le clic effectué (ou timeout), on avance à la carte suivante
+                    setTimeout(() => {
+                        console.log("[WM-Debug] ⏩ Passage à la carte suivante...");
+                        const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
+                        if (rightArrowSvg) {
+                            rightArrowSvg.closest('button').click();
+                        } else {
+                            const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
+                            if (continueBtn) {
+                                console.log("[WM-Debug] 🏁 Fin du paquet, on clique sur Continuer.");
+                                continueBtn.click();
+                            }
+                        }
+                    }, 200);
                 }
-            }
-
-            // On laisse 200ms (au lieu de 80) pour que le bouton Bulk devienne vert
-            // et que l'Observer déverrouille son verrou de sécurité avant de tourner la page.
-            setTimeout(() => {
-                console.log("[WM-Debug] ⏩ Passage à la carte suivante...");
-                const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
-                if (rightArrowSvg) {
-                    rightArrowSvg.closest('button').click();
-                } else {
-                    const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
-                    if (continueBtn) {
-                        console.log("[WM-Debug] 🏁 Fin du paquet, on clique sur Continuer.");
-                        continueBtn.click();
-                    }
-                }
-            }, 200);
+            );
             return;
         }
 
@@ -56,17 +98,13 @@
             if (leftArrowSvg) {
                 leftArrowSvg.closest('button').click();
 
-                // 2. Attendre la fin du slide, puis ajouter au Bulk
-                setTimeout(() => {
-                    const targetCard = document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72');
-                    if (targetCard) {
-                        const bulkBtn = targetCard.querySelector('.wm-btn-bulk');
-                        if (bulkBtn && !bulkBtn.disabled) {
-                            console.log("[WM-Debug] 🟢 Clic sur Bulk (Rétroactif) effectué.");
-                            bulkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                        }
+                // 2. Attendre que la carte précédente soit active et que son bouton bulk soit prêt
+                clickBulkWithRetry(
+                    () => document.querySelector('.swiper-slide-active .w-72') || document.querySelector('.w-72'),
+                    () => {
+                        console.log("[WM-Debug] 🟢 Carte précédente traitée avec succès.");
                     }
-                }, 200);
+                );
             }
             return;
         }

@@ -31,103 +31,189 @@
         }
     }
 
-    function wmSavePriceToCache(title, data) {
-        if (data === "LOADING" || data === "ERROR") return;
-
-        // Compresse : { L: {average: 100} } → { L: 100 }
-        let compressed = data;
-        if (data && typeof data === 'object') {
-            compressed = {};
-            for (const [rarity, val] of Object.entries(data)) {
-                if (val && typeof val.average === 'number') {
-                    compressed[rarity] = val.average;
-                }
+    function compressPriceSummary(summary) {
+        if (!summary || typeof summary !== 'object') return summary;
+        const compressed = {};
+        for (const [rarity, val] of Object.entries(summary)) {
+            if (typeof val === 'number') {
+                compressed[rarity] = val;
+            } else if (val && typeof val.average === 'number') {
+                compressed[rarity] = val.average;
+            } else if (val && typeof val.price === 'number') {
+                compressed[rarity] = val.price;
             }
         }
+        return Object.keys(compressed).length > 0 ? compressed : "EMPTY";
+    }
 
-        window.wmPrices[title] = compressed;
-        window.wmPriceTimestamps[title] = Date.now();
+    function wmSavePriceToCache(title, data, uuid = null) {
+        if (data === "LOADING" || data === "ERROR") return;
+
+        const compressed = (typeof data === 'object' && data !== null) ? compressPriceSummary(data) : data;
+
+        if (title) {
+            const cleanTitle = String(title).trim();
+            window.wmPrices[cleanTitle] = compressed;
+            window.wmPriceTimestamps[cleanTitle] = Date.now();
+        }
+
+        if (uuid) {
+            window.wmPrices[uuid] = compressed;
+            window.wmPriceTimestamps[uuid] = Date.now();
+        }
 
         // Sauvegarde data
         try {
             const existing = JSON.parse(localStorage.getItem(WM_PRICE_DATA_KEY) || '{}');
-            existing[title] = compressed;
+            if (title) existing[String(title).trim()] = compressed;
+            if (uuid) existing[uuid] = compressed;
             localStorage.setItem(WM_PRICE_DATA_KEY, JSON.stringify(existing));
         } catch (e) { console.warn('[WM-Price] save data échoué:', e); }
 
         // Sauvegarde ts
         try {
             const existing = JSON.parse(localStorage.getItem(WM_PRICE_TS_KEY) || '{}');
-            existing[title] = Date.now();
+            if (title) existing[String(title).trim()] = Date.now();
+            if (uuid) existing[uuid] = Date.now();
             localStorage.setItem(WM_PRICE_TS_KEY, JSON.stringify(existing));
         } catch (e) { console.warn('[WM-Price] save ts échoué:', e); }
     }
 
     /**
  * Renvoie le prix moyen d'une carte pour SA rareté possédée.
- * @param {string} title
+ * @param {string} titleOrUuid
  * @param {string} rarity
  * @returns {number|null}
  */
-    function wmGetPriceFor(title, rarity) {
-        const p = window.wmPrices[title];
+    function wmGetPriceFor(titleOrUuid, rarity) {
+        const key = String(titleOrUuid || '').trim();
+        const p = window.wmPrices[key];
         if (!p || typeof p !== 'object') return null;
         const v = p[rarity];
-        return typeof v === 'number' ? v : null;
+        if (typeof v === 'number') return v;
+        if (v && typeof v.average === 'number') return v.average;
+        return null;
     }
 
     const userCardIdCache = new Map();
 
     // ============================================================
-    // PRIX EN CACHE (Avec Retry 3 essais + Erreur UI)
+    // FILE D'ATTENTE THROTTLED POUR ÉVITER LE RATE-LIMIT (429)
     // ============================================================
-    async function fetchPricesBackground(uuid, cardTitle, attempt = 1) {
-        if (!uuid || !cardTitle) return;
+    const priceQueue = [];
+    let isQueueProcessing = false;
+    const QUEUE_DELAY_MS = 350; // 350ms entre requêtes
+    let rateLimitBackoffUntil = 0;
 
+    function enqueuePriceFetch(uuid, cardTitle) {
+        if (!uuid) return;
+        const cleanTitle = cardTitle ? String(cardTitle).trim() : '';
+
+        // Si déjà en cache et valide (< 24h)
         const now = Date.now();
-        const timestamp = window.wmPriceTimestamps[cardTitle] || 0;
-        const isStale = (now - timestamp) > 259200000; // 24h
+        const cached = window.wmPrices[uuid] || (cleanTitle ? window.wmPrices[cleanTitle] : null);
+        const ts = window.wmPriceTimestamps[uuid] || (cleanTitle ? window.wmPriceTimestamps[cleanTitle] : 0);
+        if (cached && cached !== "LOADING" && cached !== "ERROR" && (now - ts) < 259200000) {
+            return;
+        }
 
-        // Si on a déjà une requête en cours, ou si le prix est valide et frais
-        if (attempt === 1 && window.wmFetching.has(uuid)) return;
-        if (attempt === 1 && window.wmPrices[cardTitle] && window.wmPrices[cardTitle] !== "LOADING" && window.wmPrices[cardTitle] !== "ERROR" && !isStale) return;
+        // Si déjà dans la file ou en cours
+        if (window.wmFetching.has(uuid)) return;
+        if (priceQueue.some(item => item.uuid === uuid)) return;
 
-        if (attempt === 1) {
-            window.wmFetching.add(uuid);
-            if (!window.wmPrices[cardTitle] || window.wmPrices[cardTitle] === "ERROR") {
-                window.wmPrices[cardTitle] = "LOADING";
-            }
+        window.wmFetching.add(uuid);
+        if (cleanTitle) window.wmPrices[cleanTitle] = "LOADING";
+        window.wmPrices[uuid] = "LOADING";
+        if (typeof window.renderPricesOnAllCards === 'function') {
             window.renderPricesOnAllCards();
         }
 
+        priceQueue.push({ uuid, cardTitle: cleanTitle, attempt: 1 });
+        processPriceQueue();
+    }
+
+    async function processSinglePriceItem(item) {
+        const { uuid, cardTitle, attempt } = item;
+
         try {
             const res = await fetch(`https://www.wiki-masters.com/api/marketplace/cards/${uuid}/sales?scope=summary`, {
-                credentials: "include", method: "GET", headers: { "Accept": "application/json" }
+                credentials: "include",
+                method: "GET",
+                headers: { "Accept": "application/json" }
             });
+
+            if (res.status === 429) {
+                // Rate limit détecté ! Pause de 3 secondes et ré-empilement
+                console.warn(`[WM-Price] ⏳ Rate-limit 429 détecté pour ${cardTitle || uuid}, mise en pause de 3s...`);
+                rateLimitBackoffUntil = Date.now() + 3000;
+                if (attempt < 3) {
+                    priceQueue.unshift({ uuid, cardTitle, attempt: attempt + 1 });
+                    processPriceQueue();
+                } else {
+                    window.wmPrices[uuid] = "ERROR";
+                    if (cardTitle) window.wmPrices[cardTitle] = "ERROR";
+                    window.wmFetching.delete(uuid);
+                    if (typeof window.renderPricesOnAllCards === 'function') {
+                        window.renderPricesOnAllCards();
+                    }
+                }
+                return;
+            }
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
             const data = await res.json();
-            const hasSales = data && data.wikipedia_title && Object.keys(data.summary || {}).length > 0;
+            const hasSales = data && Object.keys(data.summary || {}).length > 0;
             const finalData = hasSales ? data.summary : "EMPTY";
+            const apiTitle = data.wikipedia_title || cardTitle;
 
-            wmSavePriceToCache(cardTitle, finalData);
+            wmSavePriceToCache(apiTitle, finalData, uuid);
             window.wmFetching.delete(uuid);
-            window.renderPricesOnAllCards();
-
-        } catch (e) {
-            console.error(`[WM-Price] ⚠️ Échec prix pour ${cardTitle} (Essai ${attempt}/3):`, e.message);
-
-            if (attempt < 3) {
-                // Retry avec délai progressif (1s, puis 1.5s...)
-                setTimeout(() => fetchPricesBackground(uuid, cardTitle, attempt + 1), 1000 + (attempt * 500));
-            } else {
-                console.error(`[WM-Price] ❌ Abandon pour ${cardTitle} après 3 essais.`);
-                window.wmPrices[cardTitle] = "ERROR";
-                window.wmFetching.delete(uuid);
+            if (typeof window.renderPricesOnAllCards === 'function') {
                 window.renderPricesOnAllCards();
             }
+
+        } catch (e) {
+            console.error(`[WM-Price] ⚠️ Échec prix pour ${cardTitle || uuid} (Essai ${attempt}/3):`, e.message);
+            if (attempt < 3) {
+                priceQueue.push({ uuid, cardTitle, attempt: attempt + 1 });
+                processPriceQueue();
+            } else {
+                window.wmPrices[uuid] = "ERROR";
+                if (cardTitle) window.wmPrices[cardTitle] = "ERROR";
+                window.wmFetching.delete(uuid);
+                if (typeof window.renderPricesOnAllCards === 'function') {
+                    window.renderPricesOnAllCards();
+                }
+            }
         }
+    }
+
+    async function processPriceQueue() {
+        if (isQueueProcessing) return;
+        isQueueProcessing = true;
+
+        while (priceQueue.length > 0) {
+            const now = Date.now();
+            if (now < rateLimitBackoffUntil) {
+                await new Promise(r => setTimeout(r, rateLimitBackoffUntil - now));
+            }
+
+            const item = priceQueue.shift();
+            if (!item) break;
+
+            // Déclenche la requête en tâche de fond sans bloquer le dispatching
+            processSinglePriceItem(item);
+
+            // Respecte la cadence décidée entre les départs de requêtes
+            await new Promise(r => setTimeout(r, QUEUE_DELAY_MS));
+        }
+
+        isQueueProcessing = false;
+    }
+
+    function fetchPricesBackground(uuid, cardTitle) {
+        enqueuePriceFetch(uuid, cardTitle);
     }
 
     // ============================================================

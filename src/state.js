@@ -81,4 +81,28 @@
 
     window.WM_PATCH_NOTES = WM_PATCH_NOTES;
     window.WikiM.WM_PATCH_NOTES = WM_PATCH_NOTES;
+
+    // ============================================================
+    // VERSIONING DU STOCKAGE LOCAL (T31)
+    // ============================================================
+    const WM_STORAGE_SCHEMA_VERSION = 2;
+    window.WM_STORAGE_SCHEMA_VERSION = WM_STORAGE_SCHEMA_VERSION;
+    window.WikiM.WM_STORAGE_SCHEMA_VERSION = WM_STORAGE_SCHEMA_VERSION;
+
+    function wmInitStorageVersion() {
+        const STORAGE_VER_KEY = 'wmStorageVersion';
+        const currentVersion = parseInt(localStorage.getItem(STORAGE_VER_KEY), 10);
+
+        if (!currentVersion || isNaN(currentVersion)) {
+            // Première initialisation ou version pré-versioning
+            localStorage.setItem(STORAGE_VER_KEY, String(WM_STORAGE_SCHEMA_VERSION));
+            console.log(`[WM] Schéma de stockage initialisé à la version ${WM_STORAGE_SCHEMA_VERSION}`);
+        } else if (currentVersion < WM_STORAGE_SCHEMA_VERSION) {
+            console.log(`[WM] Migration du stockage détectée (${currentVersion} -> ${WM_STORAGE_SCHEMA_VERSION})`);
+            // Point d'extension pour migrations futures si nécessaire
+            localStorage.setItem(STORAGE_VER_KEY, String(WM_STORAGE_SCHEMA_VERSION));
+        }
+    }
+
+    window.wmInitStorageVersion = WikiM.wmInitStorageVersion = wmInitStorageVersion;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

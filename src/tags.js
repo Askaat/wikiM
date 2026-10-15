@@ -7,7 +7,7 @@
     // ============================================================
     // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent & Anti-CORS)
     // ============================================================
-    async function processAutoTags(pulledCards) {
+    async function processAutoTags(pulledCards, ownedCopies = null) {
         const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
         if (!isAutoTagEnabled || !pulledCards || pulledCards.length === 0) return;
 
@@ -18,30 +18,47 @@
             const userId = (typeof W !== 'undefined' && W.wmUserId) ? W.wmUserId : window.wmUserId;
             if (!userId) throw new Error("ID utilisateur introuvable.");
 
-            // 1. Récupération des user_card_id physiques
-            const physicalCards = await window.supabaseRequestWithRetry(
-                'GET',
-                `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
-            );
+            // 1. Récupération des user_card_id physiques (Priorité aux owned_copies directs du pack)
+            let physicalCards = null;
+            if (Array.isArray(ownedCopies) && ownedCopies.length > 0) {
+                console.log(`[WM-Tags] ⚡ Utilisation directe de ${ownedCopies.length} copies physiques fournies par le pack !`);
+                physicalCards = ownedCopies;
+            } else {
+                physicalCards = await window.supabaseRequestWithRetry(
+                    'GET',
+                    `/rest/v1/user_cards?select=id,card_id&user_id=eq.${userId}&order=obtained_at.desc&limit=${pulledCards.length}`
+                );
+            }
 
             if (!physicalCards || !Array.isArray(physicalCards)) throw new Error("Impossible de récupérer les cartes physiques.");
 
             // 2. Chargement de TES règles avancées
             const activeRules = getFlatRules();
+            if (activeRules.length === 0) return;
 
-            // 3. Croisement des données et envoi des requêtes
-            // 3. Croisement des données et envoi des requêtes
+            // 3. Pré-chargement des prix en parallèle (au lieu d'une attente bloquante séquentielle par carte)
+            const titlesNeedingPrice = pulledCards
+                .map(pc => pc.wikipedia_title || pc.title)
+                .filter(t => t && (!window.wmPrices[t] || window.wmPrices[t] === "LOADING"));
+
+            if (titlesNeedingPrice.length > 0) {
+                let waitTime = 0;
+                while (waitTime < 30) {
+                    const anyLoading = titlesNeedingPrice.some(t => !window.wmPrices[t] || window.wmPrices[t] === "LOADING");
+                    if (!anyLoading) break;
+                    await new Promise(r => setTimeout(r, 100));
+                    waitTime++;
+                }
+            }
+
+            // 4. Croisement des données et préparation du lot
+            const batchPairs = [];
+
             for (const pc of pulledCards) {
                 const physical = physicalCards.find(p => p.card_id === pc.id);
                 if (!physical) continue;
 
                 const title = pc.wikipedia_title || pc.title;
-
-                let waitTime = 0;
-                while ((!window.wmPrices[title] || window.wmPrices[title] === "LOADING") && waitTime < 80) {
-                    await new Promise(r => setTimeout(r, 100));
-                    waitTime++;
-                }
 
                 // Formatage de la carte avec la Description !
                 const cardForEval = {
@@ -56,31 +73,35 @@
                 const desiredTagIds = window.evaluateAllRules(cardForEval, activeRules, window.wmPrices);
 
                 for (const tagId of desiredTagIds) {
-                    await window.supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
+                    batchPairs.push({
                         user_card_id: physical.id,
-                        tag_id: tagId
+                        tag_id: tagId,
+                        title: title
                     });
+                }
+            }
 
-                    // Récupération des infos du tag
-                    const tagObj = window.wmTagsCache.find(t => t.id === tagId);
+            // Envoi groupé en une seule requête !
+            if (batchPairs.length > 0) {
+                window.logToPanel(`🏷️ Auto-Tag : application groupée de ${batchPairs.length} étiquette(s)...`);
+                await wmApplyTagsBatch(batchPairs);
+
+                for (const item of batchPairs) {
+                    const tagObj = window.wmTagsCache.find(t => t.id === item.tag_id);
                     const tagName = tagObj ? tagObj.name : 'Tag';
                     const tagColor = tagObj ? tagObj.color : '#a78bfa';
 
-                    console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${title}`);
+                    console.log(`[WM-Tags] ✅ Étiquette "${tagName}" appliquée sur ${item.title}`);
 
-                    // Sauvegarde dans le cache visuel global
                     if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
-                    if (!window.wmVisualTagsCache[title]) window.wmVisualTagsCache[title] = [];
-
-                    // On évite les doublons visuels
-                    if (!window.wmVisualTagsCache[title].some(t => t.id === tagId)) {
-                        window.wmVisualTagsCache[title].push({ id: tagId, name: tagName, color: tagColor });
+                    if (!window.wmVisualTagsCache[item.title]) window.wmVisualTagsCache[item.title] = [];
+                    if (!window.wmVisualTagsCache[item.title].some(t => t.id === item.tag_id)) {
+                        window.wmVisualTagsCache[item.title].push({ id: item.tag_id, name: tagName, color: tagColor });
                     }
+                }
 
-                    // On force le rafraîchissement immédiat de l'UI
-                    if (typeof window.renderTagsOnAllCards === 'function') window.renderTagsOnAllCards();
-
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                if (typeof window.renderTagsOnAllCards === 'function') {
+                    window.renderTagsOnAllCards();
                 }
             }
         } catch (e) {
@@ -122,32 +143,116 @@
         return tagIds;
     }
 
+    /**
+     * Applique un lot d'étiquettes à plusieurs cartes en requêtes POST groupées (Supabase).
+     * Utilise l'endpoint exact du jeu : on_conflict=user_card_id,tag_id avec prefer: resolution=ignore-duplicates.
+     */
+    async function wmApplyTagsBatch(pairs) {
+        if (!Array.isArray(pairs) || pairs.length === 0) return { ok: true, count: 0 };
+
+        const normalizedPairs = pairs.map(p => ({
+            user_card_id: p.user_card_id || p.userCardId,
+            tag_id: p.tag_id || p.tagId
+        })).filter(p => p.user_card_id && p.tag_id);
+
+        if (normalizedPairs.length === 0) return { ok: true, count: 0 };
+
+        const BATCH_SIZE = 100;
+        const totalBatches = Math.ceil(normalizedPairs.length / BATCH_SIZE);
+        let successCount = 0;
+
+        const path = '/rest/v1/user_card_tags?on_conflict=user_card_id%2Ctag_id&columns=%22user_card_id%22%2C%22tag_id%22';
+        const extraHeaders = {
+            'Prefer': 'resolution=ignore-duplicates, count=exact'
+        };
+
+        for (let i = 0; i < totalBatches; i++) {
+            const batch = normalizedPairs.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            try {
+                await window.supabaseRequestWithRetry('POST', path, batch, {
+                    label: `batch-tags lot ${i + 1}/${totalBatches}`
+                }, extraHeaders);
+
+                successCount += batch.length;
+
+                // Mise à jour immédiate des caches locaux pour chaque carte du lot
+                for (const { user_card_id, tag_id } of batch) {
+                    if (window.wmUserCardTagsCache) {
+                        if (!window.wmUserCardTagsCache.has(user_card_id)) {
+                            window.wmUserCardTagsCache.set(user_card_id, new Set());
+                        }
+                        window.wmUserCardTagsCache.get(user_card_id).add(tag_id);
+                    }
+                }
+            } catch (e) {
+                console.error(`[WM-Tags] ❌ Erreur lot ${i + 1} application tags :`, e);
+                throw e;
+            }
+
+            if (i < totalBatches - 1) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+        }
+
+        return { ok: true, count: successCount };
+    }
+
+    /**
+     * Supprime un lot d'étiquettes en groupant par tag_id pour minimiser les requêtes DELETE.
+     */
+    async function wmRemoveTagsBatch(pairs) {
+        if (!Array.isArray(pairs) || pairs.length === 0) return { ok: true, count: 0 };
+
+        const byTag = new Map();
+        for (const p of pairs) {
+            const uId = p.user_card_id || p.userCardId;
+            const tId = p.tag_id || p.tagId;
+            if (!uId || !tId) continue;
+            if (!byTag.has(tId)) byTag.set(tId, []);
+            byTag.get(tId).push(uId);
+        }
+
+        let removedCount = 0;
+        const BATCH_SIZE = 100;
+
+        for (const [tagId, uIds] of byTag.entries()) {
+            for (let i = 0; i < uIds.length; i += BATCH_SIZE) {
+                const chunk = uIds.slice(i, i + BATCH_SIZE);
+                const path = `/rest/v1/user_card_tags?user_card_id=in.(${chunk.join(',')})&tag_id=eq.${tagId}`;
+                try {
+                    await window.supabaseRequestWithRetry('DELETE', path);
+                    removedCount += chunk.length;
+
+                    for (const uId of chunk) {
+                        if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(uId)) {
+                            window.wmUserCardTagsCache.get(uId).delete(tagId);
+                        }
+                    }
+                } catch (e) {
+                    console.error(`[WM-Tags] ❌ Erreur suppression tag ${tagId} :`, e);
+                    throw e;
+                }
+                if (i + BATCH_SIZE < uIds.length) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
+        }
+
+        return { ok: true, count: removedCount };
+    }
+
     async function wmApplyTag(userCardId, tagId) {
-        const existing = await wmFetchUserCardTags(userCardId);
-        if (existing.has(tagId)) return { ok: true, skipped: true };
         try {
-            await window.supabaseRequestWithRetry('POST', '/rest/v1/user_card_tags', {
-                user_card_id: userCardId,
-                tag_id: tagId
-            });
-            existing.add(tagId);
+            await wmApplyTagsBatch([{ user_card_id: userCardId, tag_id: tagId }]);
             return { ok: true, skipped: false };
         } catch (e) {
-            if (String(e.message).includes('409') || String(e.message).includes('duplicate')) {
-                existing.add(tagId);
-                return { ok: true, skipped: true };
-            }
             return { ok: false, error: e.message };
         }
     }
 
     async function wmRemoveTag(userCardId, tagId) {
-        const existing = await wmFetchUserCardTags(userCardId);
-        if (!existing.has(tagId)) return { ok: true, skipped: true };
         try {
-            await window.supabaseRequestWithRetry('DELETE',
-                                  `/rest/v1/user_card_tags?user_card_id=eq.${userCardId}&tag_id=eq.${tagId}`);
-            existing.delete(tagId);
+            await wmRemoveTagsBatch([{ user_card_id: userCardId, tag_id: tagId }]);
             return { ok: true, skipped: false };
         } catch (e) {
             return { ok: false, error: e.message };
@@ -1175,14 +1280,20 @@
                 }
 
                 let existingTags;
-                try {
-                    existingTags = await window.withRetry(
-                        () => wmFetchUserCardTags(card.userCardId),
-                        { label: `tags "${card.title.slice(0, 20)}"`, retries: 2, baseDelay: 1200, maxDelay: 4000 }
-                    );
-                } catch (e) {
-                    fetchErrors++;
-                    continue;
+                if (card.existingTags instanceof Set) {
+                    existingTags = card.existingTags;
+                } else if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(card.userCardId)) {
+                    existingTags = window.wmUserCardTagsCache.get(card.userCardId);
+                } else {
+                    try {
+                        existingTags = await window.withRetry(
+                            () => wmFetchUserCardTags(card.userCardId),
+                            { label: `tags "${card.title.slice(0, 20)}"`, retries: 2, baseDelay: 1200, maxDelay: 4000 }
+                        );
+                    } catch (e) {
+                        fetchErrors++;
+                        continue;
+                    }
                 }
 
                 const desiredTags = desiredTagsByCard.get(card.userCardId) || new Set();
@@ -1263,56 +1374,85 @@
             renderScanProgress();
         };
 
+        const BATCH_CHUNK_SIZE = 100;
+
         try {
-            // Ajouts
-            for (const { card, tagId } of toAdd) {
+            // Ajouts par lots
+            for (let i = 0; i < toAdd.length; i += BATCH_CHUNK_SIZE) {
                 if (st.cancelled) break;
                 if (!(await waitIfPaused())) break;
 
+                const chunk = toAdd.slice(i, i + BATCH_CHUNK_SIZE);
+                const pairs = chunk.map(item => ({ user_card_id: item.card.userCardId, tag_id: item.tagId }));
+
                 let r;
                 try {
-                    r = await window.withRetry(() => wmApplyTag(card.userCardId, tagId), {
-                        label: `apply "${card.title.slice(0,20)}"`, retries: 3, baseDelay: 1000, maxDelay: 6000
+                    r = await window.withRetry(() => wmApplyTagsBatch(pairs), {
+                        label: `apply lot ${Math.floor(i / BATCH_CHUNK_SIZE) + 1}/${Math.ceil(toAdd.length / BATCH_CHUNK_SIZE)}`,
+                        retries: 3,
+                        baseDelay: 1000,
+                        maxDelay: 6000
                     });
-                } catch (e) { r = { ok: false, error: e.message }; }
+                } catch (e) {
+                    r = { ok: false, error: e.message };
+                }
 
-                if (r.ok) { done++; consecutiveErrors = 0; }
-                else {
-                    failed++; consecutiveErrors++;
-                    console.warn('[WM-Tags] apply fail:', card.title, r.error);
+                if (r && r.ok) {
+                    done += chunk.length;
+                    consecutiveErrors = 0;
+                } else {
+                    failed += chunk.length;
+                    consecutiveErrors++;
+                    console.warn('[WM-Tags] batch apply fail:', r ? r.error : 'Unknown error');
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                        window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs consécutives, arrêt`);
+                        window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs consécutives de lot, arrêt`);
                         break;
                     }
                 }
                 updateProgress();
-                await new Promise(res => setTimeout(res, DELAY_MS));
+                if (i + BATCH_CHUNK_SIZE < toAdd.length) {
+                    await new Promise(res => setTimeout(res, 100));
+                }
             }
 
-            // Retraits
+            // Retraits par lots
             if (!st.cancelled && consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
                 consecutiveErrors = 0;
-                for (const { card, tagId } of toRemove) {
+                for (let i = 0; i < toRemove.length; i += BATCH_CHUNK_SIZE) {
                     if (st.cancelled) break;
                     if (!(await waitIfPaused())) break;
 
+                    const chunk = toRemove.slice(i, i + BATCH_CHUNK_SIZE);
+                    const pairs = chunk.map(item => ({ user_card_id: item.card.userCardId, tag_id: item.tagId }));
+
                     let r;
                     try {
-                        r = await window.withRetry(() => wmRemoveTag(card.userCardId, tagId), {
-                            label: `remove "${card.title.slice(0,20)}"`, retries: 3, baseDelay: 1000, maxDelay: 6000
+                        r = await window.withRetry(() => wmRemoveTagsBatch(pairs), {
+                            label: `remove lot ${Math.floor(i / BATCH_CHUNK_SIZE) + 1}/${Math.ceil(toRemove.length / BATCH_CHUNK_SIZE)}`,
+                            retries: 3,
+                            baseDelay: 1000,
+                            maxDelay: 6000
                         });
-                    } catch (e) { r = { ok: false, error: e.message }; }
+                    } catch (e) {
+                        r = { ok: false, error: e.message };
+                    }
 
-                    if (r.ok) { done++; consecutiveErrors = 0; }
-                    else {
-                        failed++; consecutiveErrors++;
+                    if (r && r.ok) {
+                        done += chunk.length;
+                        consecutiveErrors = 0;
+                    } else {
+                        failed += chunk.length;
+                        consecutiveErrors++;
+                        console.warn('[WM-Tags] batch remove fail:', r ? r.error : 'Unknown error');
                         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                            window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs, arrêt`);
+                            window.logToPanel(`⛔ ${MAX_CONSECUTIVE_ERRORS} erreurs de lot, arrêt`);
                             break;
                         }
                     }
                     updateProgress();
-                    await new Promise(res => setTimeout(res, DELAY_MS));
+                    if (i + BATCH_CHUNK_SIZE < toRemove.length) {
+                        await new Promise(res => setTimeout(res, 100));
+                    }
                 }
             }
 
@@ -1345,6 +1485,8 @@
     window.wmFetchUserCardTags = WikiM.wmFetchUserCardTags = wmFetchUserCardTags;
     window.wmApplyTag = WikiM.wmApplyTag = wmApplyTag;
     window.wmRemoveTag = WikiM.wmRemoveTag = wmRemoveTag;
+    window.wmApplyTagsBatch = WikiM.wmApplyTagsBatch = wmApplyTagsBatch;
+    window.wmRemoveTagsBatch = WikiM.wmRemoveTagsBatch = wmRemoveTagsBatch;
     window.getTagGroups = WikiM.getTagGroups = getTagGroups;
     window.saveTagGroups = WikiM.saveTagGroups = saveTagGroups;
     window.getFlatRules = WikiM.getFlatRules = getFlatRules;

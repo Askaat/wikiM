@@ -58,6 +58,20 @@
                 const discarded = data?.discarded_count ?? chunk.length;
                 totalDiscarded += discarded;
 
+                // PERSISTANCE IMMÉDIATE : retirer ce lot de wmBulkList dès qu'il est validé
+                try {
+                    const currentStored = JSON.parse(localStorage.getItem('wmBulkList') || '[]');
+                    const failedIdsInChunk = new Set((data?.failed || []).map(f => f.card_id || f.id));
+                    const chunkSet = new Set(chunk.filter(id => !failedIdsInChunk.has(id)));
+                    const remainingStored = currentStored.filter(item => {
+                        const uId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
+                        return !uId || !chunkSet.has(uId);
+                    });
+                    localStorage.setItem('wmBulkList', JSON.stringify(remainingStored));
+                    if (typeof window.updateBulkUI === 'function') window.updateBulkUI();
+                    if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
+                } catch(e) {}
+
                 if (typeof data?.balance === 'number') {
                     lastBalance = data.balance;
                 }
@@ -70,6 +84,12 @@
                 }
 
                 window.logToPanel(`[Lot ${i + 1}/${totalChunks}] ✅ ${discarded} défaussées (cumul : ${totalDiscarded})`);
+
+                // Interruption propre si demandée par l'utilisateur
+                if (window._wmCancelBulkDiscard) {
+                    window.logToPanel(`⏹️ Défausse interrompue par l'utilisateur (${totalDiscarded} cartes défaussées).`);
+                    break;
+                }
 
             } catch (e) {
                 console.error(`[WM-Bulk] ❌ Lot ${i + 1} échoué :`, e);
@@ -93,6 +113,92 @@
             failed: allFailed,
             chunks: totalChunks
         };
+    }
+
+    /**
+     * Nettoie le panier Bulk en vérifiant l'existence réelle des cartes sur Supabase.
+     * Élimine les cartes fantômes (déjà défaussées ou vendues).
+     */
+    async function wmCleanBulkList() {
+        const rawBulkList = JSON.parse(localStorage.getItem('wmBulkList') || '[]');
+        if (rawBulkList.length === 0) {
+            window.logToPanel("ℹ️ Panier Bulk vide, rien à nettoyer.");
+            return { removed: 0, remaining: 0 };
+        }
+
+        const authObj = window.wmAuth || (typeof W !== 'undefined' && W.wmAuth) || {};
+        if (!authObj.token || !authObj.apikey) {
+            window.logToPanel("⚠️ Authentification introuvable pour synchroniser le bulk avec le serveur.");
+            return { removed: 0, remaining: rawBulkList.length };
+        }
+
+        const validItems = rawBulkList.filter(item => typeof item === 'object' && (item.user_card_id || item.userCardId));
+        if (validItems.length === 0) {
+            window.logToPanel("ℹ️ Aucune carte avec identifiant physique dans le bulk.");
+            return { removed: 0, remaining: rawBulkList.length };
+        }
+
+        window.logToPanel(`🧹 Analyse du bulk : vérification de ${validItems.length} cartes sur le serveur...`);
+
+        const allIds = validItems.map(item => item.user_card_id || item.userCardId);
+        const BATCH_SIZE = 120;
+        const existingIds = new Set();
+        const token = authObj.token.startsWith('Bearer') ? authObj.token : `Bearer ${authObj.token}`;
+        const supabaseRef = window.SUPABASE_REF || 'cyrxjeppjqsxxjayfrur';
+        const nativeFetch = window._wmNativeFetch || fetch;
+
+        for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
+            const batch = allIds.slice(i, i + BATCH_SIZE);
+            const targetUrl = `https://${supabaseRef}.supabase.co/rest/v1/user_cards?select=id&id=in.(${batch.join(',')})`;
+
+            try {
+                const res = await nativeFetch(targetUrl, {
+                    method: 'GET',
+                    headers: {
+                        'apikey': authObj.apikey,
+                        'authorization': token,
+                        'accept': 'application/json',
+                        'content-profile': 'public'
+                    },
+                    credentials: 'omit'
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        data.forEach(row => existingIds.add(row.id));
+                    }
+                }
+            } catch (e) {
+                console.error("[WM-Bulk] Erreur lors du scan Supabase :", e);
+            }
+        }
+
+        let removedCount = 0;
+        const cleanList = rawBulkList.filter(item => {
+            const uId = typeof item === 'object' ? (item.user_card_id || item.userCardId) : null;
+            if (!uId) return true;
+            const exists = existingIds.has(uId);
+            if (!exists) removedCount++;
+            return exists;
+        });
+
+        localStorage.setItem('wmBulkList', JSON.stringify(cleanList));
+        window.logToPanel(`✅ Nettoyage terminé : ${removedCount} cartes fantômes supprimées, ${cleanList.length} cartes réelles conservées.`);
+        if (typeof window.showWMToast === 'function') {
+            window.showWMToast(`Bulk nettoyé : -${removedCount} cartes fantômes`, true);
+        }
+
+        if (typeof window.updateBulkUI === 'function') window.updateBulkUI();
+        if (typeof window.updateAllBulkButtonsUI === 'function') window.updateAllBulkButtonsUI();
+
+        // Si l'utilisateur est sur la page collection avec la vue [WM-BULK], rafraîchir la page
+        const searchInput = document.querySelector('input[placeholder*="titre"], input[placeholder*="echerche"], input[type="search"]');
+        if (searchInput && searchInput.value.includes('[WM-BULK]')) {
+            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        return { removed: removedCount, remaining: cleanList.length };
     }
 
     // ============================================================
@@ -180,10 +286,17 @@
         try {
             window.wmCollectionCache.ts = Date.now();
             localStorage.setItem(WM_COLLECTION_CACHE_KEY, JSON.stringify(window.wmCollectionCache));
+            if (typeof window.checkLocalStorageQuota === 'function') {
+                window.checkLocalStorageQuota();
+            }
             return true;
         } catch (e) {
             if (e.name === 'QuotaExceededError') {
                 window.logToPanel('⚠️ Cache collection : quota localStorage dépassé');
+                if (typeof window.showPersistentStorageAlert === 'function') {
+                    const stats = typeof window.getLocalStorageStats === 'function' ? window.getLocalStorageStats() : { percent: 100, usedMo: '5+', maxMo: '5.0', topKeys: [] };
+                    window.showPersistentStorageAlert({ ...stats, percent: 100 }, true);
+                }
             } else {
                 console.warn('[WM-Cache] Erreur save:', e);
             }
@@ -196,6 +309,95 @@
         window.wmCollectionCache = { v: WM_COLLECTION_CACHE_VERSION, ts: 0, cards: [] };
         window.wmCardIdToUserCardId.clear();
         console.log('[WM-Cache] Effacé');
+    }
+
+    // ============================================================
+    // INGESTION PASSIVE DE LA COLLECTION
+    // ============================================================
+    window.wmLastCollectionPage = [];
+    let wmSaveCollectionTimeout = null;
+
+    function debouncedSaveCollectionCache() {
+        if (wmSaveCollectionTimeout) clearTimeout(wmSaveCollectionTimeout);
+        wmSaveCollectionTimeout = setTimeout(() => {
+            wmSaveCollectionCache();
+            wmSaveCollectionTimeout = null;
+        }, 1500);
+    }
+
+    function ingestCollectionData(collectionItems) {
+        if (!Array.isArray(collectionItems) || collectionItems.length === 0) return;
+        window.wmLastCollectionPage = collectionItems;
+
+        const cacheMap = new Map();
+        for (const stored of (window.wmCollectionCache.cards || [])) {
+            if (stored.id) cacheMap.set(stored.id, stored);
+            else if (stored.t) cacheMap.set(stored.t, stored);
+        }
+
+        let updated = false;
+        for (const item of collectionItems) {
+            const userCardId = item.id;
+            const cardId = item.card?.id || item.card_id;
+            const title = item.card?.wikipedia_title || item.wikipedia_title || item.title;
+            const rarity = item.card?.rarity;
+            const category = item.card?.category;
+            const tags = Array.isArray(item.tags) ? item.tags : [];
+
+            if (cardId && userCardId) {
+                window.wmCardIdToUserCardId.set(cardId, userCardId);
+            }
+
+            // Mémorisation des tags existants dans le cache Map
+            if (userCardId && window.wmUserCardTagsCache) {
+                window.wmUserCardTagsCache.set(userCardId, new Set(tags.map(t => t.id)));
+            }
+
+            // Cache visuel des tags pour l'affichage immédiat
+            if (title && tags.length > 0) {
+                if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                window.wmVisualTagsCache[title] = tags.map(t => ({
+                    id: t.id,
+                    name: t.name,
+                    color: t.color || '#a78bfa'
+                }));
+            }
+
+            // Mise à jour du cache de collection
+            if (cardId && title) {
+                const existing = cacheMap.get(cardId) || cacheMap.get(title);
+                if (existing) {
+                    existing.ucId = userCardId || existing.ucId;
+                    existing.r = rarity || existing.r;
+                    existing.c = category || existing.c;
+                    existing.t = title || existing.t;
+                } else {
+                    const newEntry = {
+                        id: cardId,
+                        ucId: userCardId,
+                        t: title,
+                        r: rarity,
+                        c: category
+                    };
+                    window.wmCollectionCache.cards.push(newEntry);
+                    cacheMap.set(cardId, newEntry);
+                }
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            debouncedSaveCollectionCache();
+        }
+        console.log(`[WM-Collection] 📥 Ingestion passive de ${collectionItems.length} cartes (Index: ${window.wmCardIdToUserCardId.size}, Cache: ${window.wmCollectionCache.cards.length})`);
+    }
+
+    // Exposition immédiate pour les intercepteurs et traitement du tampon
+    window.ingestCollectionData = WikiM.ingestCollectionData = ingestCollectionData;
+    if (window._wmPendingCollectionData && Array.isArray(window._wmPendingCollectionData)) {
+        console.log(`[WM-Collection] 📥 Traitement du tampon en attente (${window._wmPendingCollectionData.length} cartes)...`);
+        ingestCollectionData(window._wmPendingCollectionData);
+        window._wmPendingCollectionData = null;
     }
 
     function wmSerializeCard(card) {
@@ -312,123 +514,173 @@
  */
     async function getVisibleCollectionCards(onProgress) {
         const cardEls = Array.from(document.querySelectorAll('div.relative.isolate.group'))
-        .filter(el => el.querySelector('img'));
+            .filter(el => el.querySelector('img'));
         const result = [];
         const seenTitles = new Set();
 
-        // Index du cache par titre normalisé
         const normalize = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+        // Index du cache persistant par titre normalisé
         const cacheByTitle = new Map();
         for (const stored of (window.wmCollectionCache.cards || [])) {
             if (stored.t) cacheByTitle.set(normalize(stored.t), stored);
         }
 
-        console.log(`[WM-Visible] DOM: ${cardEls.length} cartes | Cache: ${cacheByTitle.size} entrées`);
+        // Index de la dernière page API interceptée par titre normalisé
+        const lastPageByTitle = new Map();
+        for (const item of (window.wmLastCollectionPage || [])) {
+            const t = item.card?.wikipedia_title || item.wikipedia_title || item.title;
+            if (t) lastPageByTitle.set(normalize(t), item);
+        }
 
-        // 1ère passe : extraire les titres + matcher avec le cache
-        const missing = []; // { el, title, index }
-        const found = [];   // { el, title, stored }
+        console.log(`[WM-Visible] DOM: ${cardEls.length} cartes | Dernière page API: ${lastPageByTitle.size} | Cache: ${cacheByTitle.size}`);
+
+        const missing = [];
 
         for (let idx = 0; idx < cardEls.length; idx++) {
             const el = cardEls[idx];
-            let title = null;
-            const h = el.querySelector('h3, h2, h1');
-            if (h && h.textContent.trim().length > 1) title = h.textContent.trim();
+
+            // 1. Extraction directe via React Fiber
+            const reactData = getCardDataFromReact(el);
+            let title = reactData?.title;
+
+            // 2. Fallback titre DOM
             if (!title) {
-                const img = el.querySelector('img');
-                if (img && img.alt && img.alt.trim().length > 1) title = img.alt.trim();
+                const h = el.querySelector('h3, h2, h1');
+                if (h && h.textContent.trim().length > 1) title = h.textContent.trim();
+                if (!title) {
+                    const img = el.querySelector('img');
+                    if (img && img.alt && img.alt.trim().length > 1) title = img.alt.trim();
+                }
             }
+
             if (!title || seenTitles.has(title)) continue;
             seenTitles.add(title);
 
-            const stored = cacheByTitle.get(normalize(title));
+            const normT = normalize(title);
+
+            let userCardId = reactData?.userCardId;
+            let cardId = reactData?.id;
+            let rarity = reactData?.rarity;
+            let category = reactData?.category;
+            let existingTags = reactData?.tags && reactData.tags.length > 0
+                ? new Set(reactData.tags.map(t => t.id))
+                : null;
+
+            // 3. Complétion via la dernière page API interceptée
+            const pageItem = lastPageByTitle.get(normT);
+            if (pageItem) {
+                userCardId = userCardId || pageItem.id;
+                cardId = cardId || pageItem.card?.id || pageItem.card_id;
+                rarity = rarity || pageItem.card?.rarity;
+                category = category || pageItem.card?.category;
+                if (!existingTags && Array.isArray(pageItem.tags)) {
+                    existingTags = new Set(pageItem.tags.map(t => t.id));
+                }
+            }
+
+            // 4. Complétion via le cache persistant
+            const stored = cacheByTitle.get(normT);
             if (stored) {
-                found.push({ el, title, stored });
+                userCardId = userCardId || stored.ucId || window.wmCardIdToUserCardId.get(stored.id);
+                cardId = cardId || stored.id;
+                rarity = rarity || stored.r;
+                category = category || stored.c;
+            }
+
+            // 5. Complétion via la table wmCardIdToUserCardId
+            if (!userCardId && cardId && window.wmCardIdToUserCardId.has(cardId)) {
+                userCardId = window.wmCardIdToUserCardId.get(cardId);
+            }
+
+            // 6. Complétion via wmUserCardTagsCache
+            if (userCardId && !existingTags && window.wmUserCardTagsCache?.has(userCardId)) {
+                existingTags = window.wmUserCardTagsCache.get(userCardId);
+            }
+
+            if (userCardId) {
+                result.push({
+                    id: cardId || userCardId,
+                    userCardId: userCardId,
+                    title: title,
+                    rarity: rarity,
+                    category: category,
+                    existingTags: existingTags
+                });
             } else {
                 missing.push({ el, title, index: idx });
             }
         }
 
-        console.log(`[WM-Visible] ${found.length} en cache, ${missing.length} manquantes à fetcher`);
+        console.log(`[WM-Visible] ✅ ${result.length} résolues sans requête, ${missing.length} manquantes`);
 
-        // 2ème passe : fetch des manquantes (avec throttling)
-        let fetched = 0;
-        let fetchFailures = 0;
-        let cacheUpdated = false;
-
-        for (let i = 0; i < missing.length; i++) {
-            const { title, index } = missing[i];
-            if (onProgress) {
-                onProgress(`🔍 Carte manquante ${i + 1}/${missing.length} : "${title.slice(0, 30)}"`);
-            }
+        // Si des cartes manquent dans la page actuelle, on fait UN SEUL fetch groupé pour la page au lieu de requêtes individuelles
+        if (missing.length > 0) {
+            console.log(`[WM-Visible] 🔄 Tentative de résolution groupée pour ${missing.length} cartes...`);
+            if (onProgress) onProgress(`Synchronisation de la page (${missing.length} cartes)...`);
 
             try {
-                const r = await window.withRetry(async () => {
-                    const resp = await fetch(
-                        `/api/my-collection?q=${encodeURIComponent(title)}&page=0&stats=0`,
-                        { credentials: 'include', headers: { 'Accept': '*/*' } }
-                    );
+                // Détection de l'URL de collection ou des filtres de la page actuelle
+                let fetchTarget = window._wmLastCollectionUrl;
+                if (!fetchTarget) {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const pageNum = urlParams.get('page') || '0';
+                    const sortParam = urlParams.get('sort') || 'rarity';
+                    fetchTarget = `/api/my-collection?sort=${encodeURIComponent(sortParam)}&page=${pageNum}&stats=0`;
+                }
+
+                const pageData = await window.withRetry(async () => {
+                    const resp = await fetch(fetchTarget, {
+                        credentials: 'include',
+                        headers: { 'Accept': '*/*' }
+                    });
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     return await resp.json();
                 }, {
-                    label: `collection q="${title.slice(0, 20)}"`,
-                    retries: 3,
-                    baseDelay: 800,
-                    maxDelay: 4000
+                    label: 'collection page sync',
+                    retries: 2,
+                    baseDelay: 600,
+                    maxDelay: 2000
                 });
 
-                const items = r?.collection || [];
-                // Match par titre exact (insensible à la casse)
-                const match = items.find(it =>
-                                         normalize(it.card?.wikipedia_title) === normalize(title)
-                                        );
+                const items = pageData?.collection || [];
+                if (items.length > 0) {
+                    ingestCollectionData(items);
 
-                if (match?.id && match.card?.id) {
-                    const stored = {
-                        id: match.card.id,
-                        ucId: match.id,
-                        t: match.card.wikipedia_title,
-                        r: match.card.rarity,
-                        c: match.card.category
-                    };
-                    // Ajoute au cache + à l'index
-                    window.wmCollectionCache.cards.push(stored);
-                    window.wmCardIdToUserCardId.set(match.card.id, match.id);
-                    cacheByTitle.set(normalize(title), stored);
-                    found.push({ el: null, title, stored });
-                    fetched++;
-                    cacheUpdated = true;
-                } else {
-                    console.warn(`[WM-Visible] ❌ "${title}" introuvable côté API`);
-                    fetchFailures++;
+                    // Ré-indexation rapide des cartes manquantes avec les données de la page ingérée
+                    const pageMap = new Map();
+                    for (const it of items) {
+                        const t = it.card?.wikipedia_title || it.wikipedia_title || it.title;
+                        if (t) pageMap.set(normalize(t), it);
+                    }
+
+                    const stillMissing = [];
+                    for (const m of missing) {
+                        const normT = normalize(m.title);
+                        const match = pageMap.get(normT);
+                        if (match && match.id) {
+                            const cid = match.card?.id || match.card_id || m.title;
+                            result.push({
+                                id: cid,
+                                userCardId: match.id,
+                                title: m.title,
+                                rarity: match.card?.rarity,
+                                category: match.card?.category,
+                                existingTags: Array.isArray(match.tags) ? new Set(match.tags.map(t => t.id)) : null
+                            });
+                        } else {
+                            stillMissing.push(m);
+                        }
+                    }
+
+                    console.log(`[WM-Visible] Résolution groupée réussie : ${missing.length - stillMissing.length} cartes récupérées en 1 seule requête !`);
                 }
-            } catch (e) {
-                console.warn(`[WM-Visible] ❌ Fetch échoué pour "${title}": ${e.message}`);
-                fetchFailures++;
+            } catch (err) {
+                console.warn('[WM-Visible] Échec du fetch groupé de la page:', err);
             }
-
-            // Throttle
-            await new Promise(res => setTimeout(res, 250));
         }
 
-        // Persiste le cache si on a ajouté des cartes
-        if (cacheUpdated) {
-            wmSaveCollectionCache();
-            console.log(`[WM-Visible] ${fetched} cartes ajoutées au cache (total: ${window.wmCollectionCache.cards.length})`);
-        }
-
-        // Construit le résultat
-        for (const { title, stored } of found) {
-            result.push({
-                id: stored.id,
-                userCardId: stored.ucId,
-                title: title,
-                rarity: stored.r,
-                category: stored.c
-            });
-        }
-
-        console.log(`[WM-Visible] Résolu: ${result.filter(c => c.userCardId).length} / ${result.length} — échecs: ${fetchFailures}`);
+        console.log(`[WM-Visible] Résolu: ${result.filter(c => c.userCardId).length} / ${result.length}`);
         return result;
     }
 
@@ -456,25 +708,63 @@
     }
 
     function getCardDataFromReact(el) {
-        const reactKey = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
+        if (!el) return null;
+        const target = el.closest ? (el.closest('.w-72, div.rounded-2xl, div.relative.isolate.group') || el) : el;
+        const reactKey = Object.keys(target).find(k => k.startsWith('__reactFiber$')) || Object.keys(el).find(k => k.startsWith('__reactFiber$'));
         if (!reactKey) return null;
-        let fiber = el[reactKey];
+        let fiber = target[reactKey] || el[reactKey];
         let attempts = 0;
-        while (fiber && attempts < 30) {
+        let foundCard = null;
+        let foundUserCardId = null;
+
+        while (fiber && attempts < 35) {
             const props = fiber.memoizedProps;
             if (props) {
-                const candidates = [props.card, props.userCard, props.item, props.data, props.value];
-                for (const c of candidates) {
-                    if (c && typeof c === 'object' && c.id) {
-                        return {
-                            id: c.id,
-                            title: c.wikipedia_title || c.card?.wikipedia_title || c.title
-                        };
+                // Recherche directe d'un userCardId ou item/userCard
+                if (!foundUserCardId) {
+                    if (props.userCard?.id) foundUserCardId = props.userCard.id;
+                    else if (props.userCardId) foundUserCardId = props.userCardId;
+                    else if (props.item?.id && (props.item?.card || props.item?.user_id || props.item?.obtained_at)) {
+                        foundUserCardId = props.item.id;
                     }
+                }
+
+                if (!foundCard) {
+                    const candidates = [props.item, props.userCard, props.card, props.data, props.value];
+                    for (const c of candidates) {
+                        if (c && typeof c === 'object' && (c.id || c.wikipedia_title || c.title)) {
+                            const isUserCard = Boolean(c.card || c.user_id || c.obtained_at);
+                            const uId = isUserCard ? c.id : (foundUserCardId || window.wmCardIdToUserCardId?.get(c.id) || null);
+                            const cId = isUserCard ? (c.card?.id || c.card_id || c.id) : (c.id || c.card_id);
+                            const title = c.wikipedia_title || c.card?.wikipedia_title || c.title;
+                            const rarity = c.rarity || c.card?.rarity;
+                            const category = c.category || c.card?.category;
+                            const tags = Array.isArray(c.tags) ? c.tags : (Array.isArray(c.card?.tags) ? c.card.tags : []);
+
+                            foundCard = {
+                                id: cId || c.id,
+                                userCardId: uId,
+                                title: title,
+                                rarity: rarity,
+                                category: category,
+                                tags: tags
+                            };
+                            break;
+                        }
+                    }
+                }
+
+                if (foundCard && foundUserCardId) {
+                    foundCard.userCardId = foundUserCardId;
+                    return foundCard;
                 }
             }
             fiber = fiber.return;
             attempts++;
+        }
+        if (foundCard) {
+            if (foundUserCardId) foundCard.userCardId = foundUserCardId;
+            return foundCard;
         }
         return null;
     }
@@ -511,35 +801,120 @@
     function renderPricesOnAllCards() {
         const cards = document.querySelectorAll('.w-72.rounded-2xl');
         cards.forEach(card => {
-            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
-            if (!titleEl) return;
-            const title = titleEl.textContent.trim();
             const cachedUuid = card.dataset.wmUuid;
-            if (cachedUuid && !window.wmPrices[title]) window.fetchPricesBackground(cachedUuid, title);
-            const existingPanel = card.querySelector('.wm-price-panel');
-            const priceData = window.wmPrices[title];
+            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+            const title = titleEl ? titleEl.textContent.trim() : null;
+
+            // Déclenche le fetch via la queue si pas encore en cache
+            if (cachedUuid && !window.wmPrices[cachedUuid] && (!title || !window.wmPrices[title])) {
+                window.fetchPricesBackground(cachedUuid, title);
+            }
+
+            // Récupère les données : priorité au UUID, puis au titre
+            const priceData = (cachedUuid && window.wmPrices[cachedUuid]) || (title && window.wmPrices[title]);
             if (priceData) {
                 let rowsHtml = '';
                 if (priceData === "LOADING") rowsHtml = `<div class="wm-price-row wm-loading-badge">⏳ Chargement...</div>`;
                 else if (priceData === "EMPTY") rowsHtml = `<div class="wm-price-row wm-empty-sales">Aucune vente</div>`;
                 else if (priceData === "ERROR") rowsHtml = `<div class="wm-price-row wm-empty-sales" style="color:#ef4444;">Erreur</div>`;
                 else {
+                    // Détection de la rareté de la carte
+                    let cardRarity = card.dataset.wmRarity;
+                    if (!cardRarity) {
+                        // 1. Badge DOM natif (ex: <div class="absolute top-2 left-2 ...">C</div>)
+                        const rarityBadge = card.querySelector('div.absolute.top-2.left-2, .wm-rarity-badge');
+                        if (rarityBadge && rarityBadge.textContent.trim().length <= 2) {
+                            cardRarity = rarityBadge.textContent.trim().toUpperCase();
+                        }
+                    }
+                    if (!cardRarity) {
+                        // 2. Classes CSS du conteneur (ex: glow-c, glow-pc, glow-ur)
+                        const classMatch = card.className.match(/glow-([a-z]+)/i);
+                        if (classMatch) {
+                            const rMap = { 'c': 'C', 'pc': 'PC', 'r': 'R', 'sr': 'SR', 'ur': 'UR', 'l': 'L' };
+                            cardRarity = rMap[classMatch[1].toLowerCase()] || null;
+                        }
+                    }
+
                     let hasPrices = false;
-                    ['L', 'UR', 'SR', 'R', 'PC', 'C'].forEach(r => {
-                        if (typeof priceData[r] === 'number') {
-                            rowsHtml += `<div class="wm-price-row"><span class="wm-rarity-label wm-r-${r}">${r}</span><span class="wm-val">${priceData[r]}</span></div>`;
+                    // Si la rareté de la carte est connue, on affiche en priorité son prix
+                    const raritiesToCheck = cardRarity ? [cardRarity] : ['L', 'UR', 'SR', 'R', 'PC', 'C'];
+
+                    raritiesToCheck.forEach(r => {
+                        const val = priceData[r];
+                        const num = typeof val === 'number' ? val : (val && typeof val.average === 'number' ? val.average : null);
+                        if (num !== null) {
+                            rowsHtml += `<div class="wm-price-row"><span class="wm-rarity-label wm-r-${r}">${r}</span><span class="wm-val">${num}</span></div>`;
                             hasPrices = true;
                         }
                     });
+
+                    // Si la carte a une rareté connue mais aucune vente pour cette rareté spécifique
                     if (!hasPrices) rowsHtml = `<div class="wm-price-row wm-empty-sales">Aucune vente</div>`;
                 }
-                if (existingPanel) { if (existingPanel.innerHTML !== rowsHtml) existingPanel.innerHTML = rowsHtml; }
-                else {
+
+                const existingPanel = card.querySelector('.wm-price-panel');
+                if (existingPanel) {
+                    if (existingPanel.innerHTML !== rowsHtml) existingPanel.innerHTML = rowsHtml;
+                } else {
                     const panel = document.createElement('div');
                     panel.className = 'wm-price-panel';
                     panel.innerHTML = rowsHtml;
                     card.appendChild(panel);
                 }
+            }
+        });
+    }
+
+    function renderAltBadgesOnAllCards() {
+        if (!window.wmAltCardOwners) return;
+        // Sélecteur large : cartes de la grille ou modales
+        const cards = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative');
+
+        cards.forEach(card => {
+            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+            if (!titleEl) return;
+
+            let altName = null;
+            const cardData = getCardDataFromReact(card);
+
+            // 1. Recherche par identifiant React
+            if (cardData && cardData.id && window.wmAltCardOwners[cardData.id]) {
+                altName = window.wmAltCardOwners[cardData.id];
+            }
+
+            // 2. Recherche par dataset UUID
+            if (!altName && card.dataset.wmUuid && window.wmAltCardOwners[card.dataset.wmUuid]) {
+                altName = window.wmAltCardOwners[card.dataset.wmUuid];
+            }
+
+            // 3. Recherche par titre normalisé
+            if (!altName) {
+                const title = titleEl.textContent.replace(/\s+/g, ' ').trim();
+                altName = window.wmAltCardOwners[title] || window.wmAltCardOwners[`title:${title}`];
+            }
+
+            let altBadge = card.querySelector('.wm-alt-badge');
+
+            if (altName) {
+                if (!altBadge) {
+                    card.style.setProperty('position', 'relative', 'important');
+                    altBadge = document.createElement('div');
+                    altBadge.className = 'wm-alt-badge';
+                    altBadge.style.cssText = 'position:absolute; bottom:12px; right:12px; z-index:9999; background:#fbbf24; color:#000; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.8); pointer-events:none;';
+                    altBadge.textContent = `👤 ${altName}`;
+                    card.appendChild(altBadge);
+                }
+                card.style.setProperty('border', '3px solid #fbbf24', 'important');
+                card.style.setProperty('box-shadow', '0 0 15px rgba(251, 191, 36, 0.4)', 'important');
+                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'none');
+            } else {
+                if (altBadge) altBadge.remove();
+                if (card.style.borderColor === 'rgb(251, 191, 36)' || card.style.borderColor === '#fbbf24' || card.style.getPropertyValue('border').includes('251')) {
+                    card.style.border = '';
+                    card.style.boxShadow = '';
+                }
+                card.querySelectorAll('.wm-action-btn').forEach(b => b.style.display = 'flex');
             }
         });
     }
@@ -710,39 +1085,197 @@
     }
 
     /**
-     * Injecte une case à cocher 'Multi-comptes' dans la barre de recherche de la collection
+     * Injecte la case à cocher 'Multi-comptes', la flèche de sélection des comptes et la barre d'inspection
      */
     function ensureCollectionMultiSearchToggle() {
         if (!window.location.pathname.includes('/collection')) return;
-        if (document.getElementById('wm-col-multi-toggle')) return;
+        if (document.getElementById('wm-col-multi-wrapper')) return;
 
         // Trouver le champ de recherche de la collection
-        const searchInput = document.querySelector('input[placeholder*="echerche"], input[type="search"], input[placeholder*="Search"]');
+        const searchInput = document.querySelector('input[placeholder*="titre"], input[placeholder*="echerche"], input[type="search"], input[placeholder*="Search"]');
         if (!searchInput) return;
+
+        // Écoute de la saisie utilisateur pour annuler immédiatement toute recherche multi-compte en cours
+        if (!searchInput._wmAbortAttached) {
+            searchInput._wmAbortAttached = true;
+            searchInput.addEventListener('input', () => {
+                if (typeof window.abortMultiSearch === 'function') {
+                    window.abortMultiSearch();
+                }
+            });
+        }
 
         const parent = searchInput.parentElement;
         if (!parent) return;
 
         const isEnabled = localStorage.getItem('wmMultiSearchEnabled') === 'true';
+        const inspectTarget = localStorage.getItem('wmInspectUser') || '';
 
-        const wrapper = document.createElement('label');
+        const wrapper = document.createElement('div');
         wrapper.id = 'wm-col-multi-wrapper';
-        wrapper.style.cssText = 'display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; color:#fbbf24; font-weight:bold; margin-left:8px; user-select:none; white-space:nowrap;';
+        wrapper.style.cssText = 'display:inline-flex; align-items:center; gap:8px; margin-left:8px; position:relative; z-index:100; user-select:none; font-family:sans-serif;';
+
         wrapper.innerHTML = `
-            <input type="checkbox" id="wm-col-multi-toggle" ${isEnabled ? 'checked' : ''} style="cursor:pointer; accent-color:#fbbf24;">
-            <span>👥 Multi-comptes</span>
-            <span id="wm-multi-progress" style="font-size:11px; margin-left:8px; font-weight:normal; transition:color 0.2s;"></span>
+            <!-- Checkbox Multi-comptes & Flèche déroulante -->
+            <div style="display:inline-flex; align-items:center; background:rgba(30,41,59,0.85); border:1px solid rgba(251,191,36,0.3); border-radius:8px; padding:4px 8px; gap:6px;">
+                <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; color:#fbbf24; font-weight:bold; margin:0;">
+                    <input type="checkbox" id="wm-col-multi-toggle" ${isEnabled ? 'checked' : ''} style="cursor:pointer; accent-color:#fbbf24;">
+                    <span>👥 Multi-comptes</span>
+                </label>
+                <button type="button" id="wm-col-multi-menu-btn" title="Choisir les comptes" style="background:none; border:none; color:#fbbf24; cursor:pointer; padding:0 3px; font-size:11px; line-height:1; opacity:0.85; transition:opacity 0.2s;">
+                    ▼
+                </button>
+            </div>
+
+            <!-- Menu déroulant des comptes -->
+            <div id="wm-col-multi-dropdown" style="display:none; position:absolute; top:calc(100% + 6px); left:0; z-index:99999; background:rgba(15,23,42,0.98); border:1px solid rgba(251,191,36,0.4); border-radius:10px; padding:8px 10px; box-shadow:0 8px 24px rgba(0,0,0,0.7); min-width:180px; max-height:240px; overflow-y:auto; backdrop-filter:blur(8px);">
+                <div style="font-size:11px; font-weight:bold; color:#fbbf24; margin-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>Comptes inclus :</span>
+                    <button type="button" id="wm-col-multi-select-all" style="background:none; border:none; color:#38bdf8; font-size:10px; cursor:pointer;">Tous</button>
+                </div>
+                <div id="wm-col-multi-accounts-list" style="display:flex; flex-direction:column; gap:5px;"></div>
+            </div>
+
+            <!-- Inspecter la collection d'un joueur -->
+            <div id="wm-col-inspect-container" style="display:inline-flex; align-items:center; background:rgba(30,41,59,0.85); border:1px solid rgba(56,189,248,0.3); border-radius:8px; padding:2px 6px; gap:4px;">
+                <input type="text" id="wm-col-inspect-input" placeholder="👤 Voir collection de..." value="${inspectTarget}" style="background:transparent; border:none; color:#e0f2fe; font-size:11px; width:135px; outline:none;" title="Entrez le pseudo d'un joueur et appuyez sur Entrée">
+                <button type="button" id="wm-col-inspect-btn" title="Inspecter cette collection" style="background:linear-gradient(135deg, #0284c7, #0369a1); border:none; border-radius:5px; color:#fff; font-size:10px; font-weight:bold; padding:2px 6px; cursor:pointer;">OK</button>
+                <button type="button" id="wm-col-inspect-clear" title="Revenir à ma collection" style="background:none; border:none; color:#ef4444; font-size:11px; font-weight:bold; cursor:pointer; padding:0 2px; ${inspectTarget ? '' : 'display:none;'}">✕</button>
+            </div>
+
+            <span id="wm-multi-progress" style="font-size:11px; font-weight:normal; transition:color 0.2s;"></span>
         `;
 
-        wrapper.querySelector('input').addEventListener('change', (e) => {
+        // 1. Logique Checkbox Multi-comptes
+        const mainCheckbox = wrapper.querySelector('#wm-col-multi-toggle');
+        mainCheckbox.addEventListener('change', (e) => {
             const checked = e.target.checked;
             localStorage.setItem('wmMultiSearchEnabled', checked ? 'true' : 'false');
             window.logToPanel(checked ? '👥 Recherche multi-comptes activée' : '👤 Recherche multi-comptes désactivée');
+            if (!checked && typeof window.abortMultiSearch === 'function') {
+                window.abortMultiSearch();
+            }
             const panelToggle = document.getElementById('wm-pref-multi-enabled');
             if (panelToggle) panelToggle.checked = checked;
         });
 
-        if (parent.parentElement && parent.parentElement.classList.contains('flex')) {
+        // 2. Logique Menu Déroulant des Comptes
+        const menuBtn = wrapper.querySelector('#wm-col-multi-menu-btn');
+        const dropdown = wrapper.querySelector('#wm-col-multi-dropdown');
+        const accountsList = wrapper.querySelector('#wm-col-multi-accounts-list');
+        const selectAllBtn = wrapper.querySelector('#wm-col-multi-select-all');
+
+        const renderDropdownAccounts = () => {
+            const allAlts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+            const savedSelected = JSON.parse(localStorage.getItem('wmMultiSelectedAccounts') || 'null');
+            const activeSet = new Set(Array.isArray(savedSelected) ? savedSelected : allAlts);
+
+            selectAllBtn.textContent = (activeSet.size === allAlts.length && allAlts.length > 0) ? 'Aucun' : 'Tous';
+
+            if (allAlts.length === 0) {
+                accountsList.innerHTML = `<span style="font-size:11px; color:#94a3b8; font-style:italic;">Aucun compte configuré (voir onglet Préférences du panel).</span>`;
+                return;
+            }
+
+            accountsList.innerHTML = allAlts.map(alt => `
+                <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:#cbd5e1; cursor:pointer; padding:2px 0;">
+                    <input type="checkbox" class="wm-alt-choice" data-alt="${alt}" ${activeSet.has(alt) ? 'checked' : ''} style="cursor:pointer; accent-color:#fbbf24;">
+                    <span>${alt}</span>
+                </label>
+            `).join('');
+
+            accountsList.querySelectorAll('.wm-alt-choice').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const selected = Array.from(accountsList.querySelectorAll('.wm-alt-choice:checked')).map(el => el.dataset.alt);
+                    localStorage.setItem('wmMultiSelectedAccounts', JSON.stringify(selected));
+                    window.wmMultiSearchCache = null;
+                    if (typeof window.abortMultiSearch === 'function') {
+                        window.abortMultiSearch();
+                    }
+                    selectAllBtn.textContent = (selected.length === allAlts.length && allAlts.length > 0) ? 'Aucun' : 'Tous';
+                    window.logToPanel(`👥 Comptes sélectionnés : ${selected.join(', ') || 'Aucun'}`);
+                });
+            });
+        };
+
+        menuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = dropdown.style.display === 'block';
+            dropdown.style.display = isOpen ? 'none' : 'block';
+            menuBtn.textContent = isOpen ? '▼' : '▲';
+            if (!isOpen) renderDropdownAccounts();
+        });
+
+        selectAllBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const allAlts = JSON.parse(localStorage.getItem('wmAltAccounts') || '[]');
+            const currentSelected = Array.from(accountsList.querySelectorAll('.wm-alt-choice:checked')).map(el => el.dataset.alt);
+            const newSelected = (currentSelected.length === allAlts.length && allAlts.length > 0) ? [] : allAlts;
+            localStorage.setItem('wmMultiSelectedAccounts', JSON.stringify(newSelected));
+            window.wmMultiSearchCache = null;
+            if (typeof window.abortMultiSearch === 'function') {
+                window.abortMultiSearch();
+            }
+            renderDropdownAccounts();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!wrapper.contains(e.target)) {
+                dropdown.style.display = 'none';
+                menuBtn.textContent = '▼';
+            }
+        });
+
+        // 3. Logique Inspection Individuelle d'un Joueur
+        const inspectInput = wrapper.querySelector('#wm-col-inspect-input');
+        const inspectBtn = wrapper.querySelector('#wm-col-inspect-btn');
+        const inspectClear = wrapper.querySelector('#wm-col-inspect-clear');
+
+        const triggerInspect = () => {
+            const targetUser = inspectInput.value.trim();
+            if (targetUser) {
+                localStorage.setItem('wmInspectUser', targetUser);
+                inspectBtn.textContent = '⏳';
+                inspectBtn.disabled = true;
+                window.logToPanel(`🔍 Inspection de la collection de "${targetUser}" en cours...`);
+            } else {
+                localStorage.removeItem('wmInspectUser');
+                window.logToPanel(`👤 Retour à votre collection...`);
+            }
+
+            // Invalide le cache et annule toute recherche en cours
+            window.wmMultiSearchCache = null;
+            if (typeof window.abortMultiSearch === 'function') {
+                window.abortMultiSearch();
+            }
+
+            // Rechargement immédiat de la page pour rafraîchir l'arbre React et charger la collection
+            window.location.reload();
+        };
+
+        inspectBtn.addEventListener('click', triggerInspect);
+        inspectInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                triggerInspect();
+            }
+        });
+
+        inspectClear.addEventListener('click', () => {
+            inspectInput.value = '';
+            localStorage.removeItem('wmInspectUser');
+            window.logToPanel(`👤 Retour à votre collection...`);
+            window.wmMultiSearchCache = null;
+            if (typeof window.abortMultiSearch === 'function') {
+                window.abortMultiSearch();
+            }
+            window.location.reload();
+        });
+
+        // Injection dans le DOM à côté du champ de recherche
+        if (typeof parent.insertAdjacentElement === 'function') {
+            parent.insertAdjacentElement('afterend', wrapper);
+        } else if (parent.parentElement) {
             parent.parentElement.appendChild(wrapper);
         } else {
             parent.appendChild(wrapper);
@@ -761,6 +1294,64 @@
     }
     window.updateMultiSearchProgress = updateMultiSearchProgress;
     window.WikiM.updateMultiSearchProgress = updateMultiSearchProgress;
+
+    function injectBulkButtonInCollection() {
+        if (!window.location.pathname.startsWith('/collection')) return;
+        if (document.getElementById('wm-btn-collection-bulk')) return;
+
+        // On cherche le bouton natif "Sélectionner"
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const selectBtn = buttons.find(b => b.textContent.trim() === 'Sélectionner');
+
+        if (selectBtn && selectBtn.parentNode) {
+            const bulkBtn = document.createElement('button');
+            bulkBtn.id = 'wm-btn-collection-bulk';
+            bulkBtn.className = selectBtn.className;
+            bulkBtn.style.borderColor = '#6366f1';
+            bulkBtn.style.color = '#a5b4fc';
+            bulkBtn.innerHTML = `🗑️ Afficher mon Bulk`;
+
+            bulkBtn.addEventListener('click', () => {
+                window.wmBulkViewActive = !window.wmBulkViewActive;
+                bulkBtn.style.background = window.wmBulkViewActive ? 'rgba(99,102,241,0.15)' : '';
+
+                if (window.wmBulkViewActive) {
+                    window.wmBulkFullCardsCache = null; // Force le rafraîchissement au clic
+                }
+
+                // Recherche de l'input de recherche (placeholder titre / search / recherche)
+                const searchInput = document.querySelector('input[placeholder*="titre"], input[placeholder*="echerche"], input[type="search"], input[placeholder*="Search"]');
+                if (searchInput) {
+                    const currentVal = searchInput.value || '';
+                    let newVal = '';
+
+                    if (window.wmBulkViewActive) {
+                        // Si l'utilisateur avait déjà tapé un filtre, on le garde après [WM-BULK]
+                        const cleanWord = currentVal.replace(/\[WM-BULK\]/gi, '').trim();
+                        newVal = cleanWord ? `[WM-BULK] ${cleanWord}` : '[WM-BULK]';
+                    } else {
+                        // En désactivant le mode bulk, on retire le préfixe [WM-BULK]
+                        newVal = currentVal.replace(/\[WM-BULK\]\s*/gi, '').trim();
+                    }
+
+                    console.log(`[WM-Bulk] 🔄 Commutation vue Bulk: ${window.wmBulkViewActive ? 'ACTIVE' : 'INACTIVE'}, valeur input: "${newVal}"`);
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+                    if (nativeInputValueSetter) {
+                        nativeInputValueSetter.call(searchInput, newVal);
+                    } else {
+                        searchInput.value = newVal;
+                    }
+                    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    console.warn("[WM-Bulk] ⚠️ Input de recherche introuvable sur la page /collection.");
+                }
+            });
+
+            selectBtn.parentNode.insertBefore(bulkBtn, selectBtn);
+        }
+    }
+    window.injectBulkButtonInCollection = WikiM.injectBulkButtonInCollection = injectBulkButtonInCollection;
 
     // ============================================================
     // NAVIGATION ENTRE CARTES DANS LE MODAL (COLLECTION)
@@ -821,15 +1412,24 @@
  * Ferme le modal courant (bouton X ou Escape).
  */
     function closeCardModal() {
-        // Cherche un bouton de fermeture
+        // Cherche un bouton de fermeture dans le modal ou son conteneur
         const modal = document.querySelector(WM_MODAL_SELECTOR);
-        if (modal) {
-            // Priorité aux boutons avec aria-label
-            const closeBtn = modal.querySelector('button[aria-label="Fermer"]')
+        const container = modal ? (modal.closest('.fixed, [role="dialog"]') || modal.parentElement || document) : document;
+
+        const closeBtn = (modal && (
+            modal.querySelector('button[aria-label="Fermer"]')
             || modal.querySelector('button[aria-label="Close"]')
-            || modal.querySelector('button[aria-label*="erm"]');
-            if (closeBtn) { closeBtn.click(); return; }
+            || modal.querySelector('button[aria-label*="erm"]')
+        )) || container.querySelector('button[aria-label="Fermer"]')
+           || container.querySelector('button[aria-label="Close"]')
+           || container.querySelector('button[aria-label*="erm"]')
+           || document.querySelector('button[aria-label="Fermer"]');
+
+        if (closeBtn) {
+            closeBtn.click();
+            return;
         }
+
         // Fallback : Escape sur le document
         document.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
@@ -1005,4 +1605,8 @@
     window.closeCardModal = WikiM.closeCardModal = closeCardModal;
     window.navigateToCardIndex = WikiM.navigateToCardIndex = navigateToCardIndex;
     window.ensureCollectionMultiSearchToggle = WikiM.ensureCollectionMultiSearchToggle = ensureCollectionMultiSearchToggle;
+    window.injectBulkButtonInCollection = WikiM.injectBulkButtonInCollection = injectBulkButtonInCollection;
+    window.renderAltBadgesOnAllCards = WikiM.renderAltBadgesOnAllCards = renderAltBadgesOnAllCards;
+    window.wmCleanBulkList = WikiM.wmCleanBulkList = wmCleanBulkList;
+    window.ingestCollectionData = WikiM.ingestCollectionData = ingestCollectionData;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

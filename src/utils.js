@@ -141,6 +141,110 @@
     }
 
     // ============================================================
+    // MONITORING DU STOCKAGE LOCAL (LocalStorage Health & Quota)
+    // ============================================================
+    const WM_LOCALSTORAGE_MAX_CHARS = 5 * 1024 * 1024; // 5 Mo standard (~5 242 880 caractères UTF-16)
+    let wmStorageAlertDismissed = false;
+
+    function getLocalStorageStats() {
+        let totalChars = 0;
+        const keyBreakdown = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key) {
+                const val = localStorage.getItem(key) || '';
+                const chars = key.length + val.length;
+                totalChars += chars;
+                keyBreakdown.push({ key, chars });
+            }
+        }
+        keyBreakdown.sort((a, b) => b.chars - a.chars);
+
+        const usedMo = (totalChars / (1024 * 1024)).toFixed(2);
+        const maxMo = (WM_LOCALSTORAGE_MAX_CHARS / (1024 * 1024)).toFixed(1);
+        const percent = Math.min(100, Math.round((totalChars / WM_LOCALSTORAGE_MAX_CHARS) * 100));
+
+        return {
+            totalChars,
+            usedMo,
+            maxMo,
+            percent,
+            topKeys: keyBreakdown.slice(0, 3)
+        };
+    }
+
+    function checkLocalStorageQuota(forceAlert = false) {
+        try {
+            const stats = getLocalStorageStats();
+            if (stats.percent >= 80 || forceAlert) {
+                showPersistentStorageAlert(stats, forceAlert);
+            }
+            return stats;
+        } catch (e) {
+            console.warn('[WM-Storage] Erreur vérification quota:', e);
+            return null;
+        }
+    }
+
+    function showPersistentStorageAlert(stats, force = false) {
+        if (wmStorageAlertDismissed && !force) return;
+        if (document.getElementById('wm-storage-persistent-alert')) return;
+
+        const alertBox = document.createElement('div');
+        alertBox.id = 'wm-storage-persistent-alert';
+        alertBox.style.cssText = `
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 100005;
+            background: #0f172a;
+            border: 2px solid ${stats.percent >= 90 ? '#ef4444' : '#f59e0b'};
+            box-shadow: 0 10px 30px rgba(0,0,0,0.85), 0 0 20px ${stats.percent >= 90 ? 'rgba(239,68,68,0.45)' : 'rgba(245,158,11,0.35)'};
+            border-radius: 12px;
+            padding: 16px 20px;
+            color: #f8fafc;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            font-size: 13px;
+            max-width: 400px;
+            line-height: 1.5;
+            backdrop-filter: blur(8px);
+        `;
+
+        const topKeyInfo = stats.topKeys && stats.topKeys.length > 0
+            ? `Principal consommateur : <b>${stats.topKeys[0].key}</b> (${(stats.topKeys[0].chars / (1024 * 1024)).toFixed(2)} Mo)`
+            : '';
+
+        alertBox.innerHTML = `
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:${stats.percent >= 90 ? '#f87171' : '#fbbf24'};">
+                    <span style="font-size:18px;">⚠️</span> Alerte LocalStorage saturé (${stats.percent}%)
+                </div>
+                <button id="wm-btn-close-storage-alert" style="background:transparent;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;" title="Fermer la notification">✕</button>
+            </div>
+            <div style="color:#cbd5e1;margin-bottom:10px;">
+                Le stockage local de votre navigateur est utilisé à <b>${stats.percent}%</b> (${stats.usedMo} Mo / ${stats.maxMo} Mo).
+                Au-delà de 100%, l'extension ne pourra plus sauvegarder les prix ni vos règles.
+            </div>
+            ${topKeyInfo ? `<div style="font-size:11px;color:#94a3b8;background:rgba(30,41,59,0.7);padding:6px 10px;border-radius:6px;margin-bottom:12px;">${topKeyInfo}</div>` : ''}
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button id="wm-btn-dismiss-storage-alert" style="background:rgba(51,65,85,0.8);border:1px solid rgba(148,163,184,0.3);border-radius:6px;color:#e2e8f0;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;">Fermer</button>
+            </div>
+        `;
+
+        document.body.appendChild(alertBox);
+
+        const closeBtn = document.getElementById('wm-btn-close-storage-alert');
+        const dismissBtn = document.getElementById('wm-btn-dismiss-storage-alert');
+        const closeHandler = () => {
+            wmStorageAlertDismissed = true;
+            alertBox.remove();
+        };
+
+        if (closeBtn) closeBtn.addEventListener('click', closeHandler);
+        if (dismissBtn) dismissBtn.addEventListener('click', closeHandler);
+    }
+
+    // ============================================================
     // SON
     // ============================================================
     function playBeep() {
@@ -253,4 +357,7 @@
     window.showToast = WikiM.showToast = showToast;
     window.formatSec = WikiM.formatSec = formatSec;
     window.markCardAsProcessedByTitle = WikiM.markCardAsProcessedByTitle = markCardAsProcessedByTitle;
+    window.getLocalStorageStats = WikiM.getLocalStorageStats = getLocalStorageStats;
+    window.checkLocalStorageQuota = WikiM.checkLocalStorageQuota = checkLocalStorageQuota;
+    window.showPersistentStorageAlert = WikiM.showPersistentStorageAlert = showPersistentStorageAlert;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

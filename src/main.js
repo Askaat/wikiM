@@ -12,6 +12,7 @@
 
         window.renderPricesOnAllCards();
         if (typeof window.renderTagsOnAllCards === 'function') window.renderTagsOnAllCards();
+        if (typeof window.renderAltBadgesOnAllCards === 'function') window.renderAltBadgesOnAllCards();
         window.applyPersistentFilters();
 
         const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
@@ -24,6 +25,7 @@
                 const cardData = window.getCardDataFromReact(card);
                 if (cardData && cardData.id) {
                     card.dataset.wmUuid = cardData.id;
+                    if (cardData.rarity) card.dataset.wmRarity = cardData.rarity;
 
                     // ---> BADGE MULTI-COMPTES <---
                     const altName = window.wmAltCardOwners && (window.wmAltCardOwners[cardData.id] || (cardData.title && window.wmAltCardOwners[`title:${cardData.title}`]));
@@ -50,6 +52,7 @@
                         const retryData = window.getCardDataFromReact(card);
                         if (retryData && retryData.id) {
                             card.dataset.wmUuid = retryData.id;
+                            if (retryData.rarity) card.dataset.wmRarity = retryData.rarity;
                             const retryAltName = window.wmAltCardOwners && (window.wmAltCardOwners[retryData.id] || (retryData.title && window.wmAltCardOwners[`title:${retryData.title}`]));
                             if (retryAltName) {
                                 let altBadge = card.querySelector('.wm-alt-badge');
@@ -112,6 +115,23 @@
         }
         window.ensureTrackButton();
         if (typeof window.ensureCollectionMultiSearchToggle === 'function') window.ensureCollectionMultiSearchToggle();
+        if (typeof window.injectBulkButtonInCollection === 'function') window.injectBulkButtonInCollection();
+
+        // --- GESTION DU BOUTON DÉFAUSSE PAGE ---
+        const bulkPageBtn = document.getElementById('wm-bulk-page-btn');
+        if (bulkPageBtn) {
+            const searchInput = document.querySelector('input[placeholder*="titre"]');
+            const isBulkView = searchInput && searchInput.value.includes('[WM-BULK]');
+            const visibleCards = document.querySelectorAll('.w-72, div.rounded-2xl.overflow-hidden.relative').length;
+
+            if (isBulkView && visibleCards > 0) {
+                bulkPageBtn.disabled = false;
+                bulkPageBtn.textContent = `🔥 Défausser la page (${visibleCards})`;
+            } else {
+                bulkPageBtn.disabled = true;
+                bulkPageBtn.textContent = isBulkView ? "🔥 Défausser la page (0)" : "🚫 Requis : Vue WM-BULK";
+            }
+        }
 
         // Sur une page d'enchère : s'assurer que le panneau est là et à jour
         const auctionId = window.getAuctionIdFromUrl();
@@ -126,8 +146,14 @@
     }, 500);
 
 
+    if (typeof window.wmInitStorageVersion === 'function') {
+        window.wmInitStorageVersion();
+    }
     window.wmLoadPriceCache();
     window.wmLoadCollectionCache();
+    if (typeof window.checkLocalStorageQuota === 'function') {
+        window.checkLocalStorageQuota();
+    }
 
     // Init
     if (document.readyState === 'loading') {
@@ -275,7 +301,11 @@
         /** Écrit un message dans la console de log du panneau WikiM */
         log: (msg) => window.logToPanel(msg),
         /** Affiche une notification toast temporaire */
-        toast: (msg) => window.showWMToast(msg)
+        toast: (msg) => window.showWMToast(msg),
+        /** Vérifie la santé et le quota du localStorage (force = true pour afficher l'alerte test) */
+        checkStorage: (force = true) => window.checkLocalStorageQuota(force),
+        /** Retourne les statistiques d'utilisation du localStorage */
+        getStorageStats: () => window.getLocalStorageStats()
     });
 
     console.log('[WM-Debug] window.wmDebug disponible pour tests');
