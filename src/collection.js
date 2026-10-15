@@ -684,18 +684,57 @@
         return result;
     }
 
-    function evaluateRule(card, rule, prices) {
-        if (!rule.conditions || rule.conditions.length === 0) return false;
-        for (const cond of rule.conditions) {
-            const field = window.WM_RULE_FIELDS[cond.field];
-            if (!field) return false;
-            const value = field.getter(card, prices);
-            if (value === null || value === undefined) return false;
-            const op = window.WM_RULE_OPERATORS[cond.operator];
-            if (!op) return false;
-            if (!op(value, cond.value)) return false;
+    // ============================================================
+    // ÉVALUATION RÉCURSIVE DES RÈGLES (Supporte ET/OU imbriqués & Ancien format)
+    // ============================================================
+    function evaluateConditionLeaf(card, cond, prices) {
+        if (!cond || !cond.field) return false;
+        const field = window.WM_RULE_FIELDS[cond.field];
+        if (!field) return false;
+        const value = field.getter(card, prices);
+        if (value === null || value === undefined) return false;
+        const op = window.WM_RULE_OPERATORS[cond.operator];
+        if (!op) return false;
+        return op(value, cond.value);
+    }
+
+    function evaluateLogicNode(card, node, prices) {
+        if (!node) return false;
+
+        // Si le nœud est un groupe logique (possède un tableau 'children')
+        if (Array.isArray(node.children)) {
+            if (node.children.length === 0) return false;
+            const logic = (node.logic || node.operator || 'AND').toUpperCase();
+            if (logic === 'OR') {
+                return node.children.some(child => evaluateLogicNode(card, child, prices));
+            } else {
+                return node.children.every(child => evaluateLogicNode(card, child, prices));
+            }
         }
-        return true;
+
+        // Sinon, c'est une condition terminale (feuille)
+        return evaluateConditionLeaf(card, node, prices);
+    }
+
+    function evaluateRule(card, rule, prices) {
+        if (!rule) return false;
+
+        // 1. Nouvelle structure arborescente (rootGroup)
+        if (rule.rootGroup && Array.isArray(rule.rootGroup.children)) {
+            return evaluateLogicNode(card, rule.rootGroup, prices);
+        }
+
+        // 2. Alternative où la règle porte directement children
+        if (Array.isArray(rule.children)) {
+            return evaluateLogicNode(card, rule, prices);
+        }
+
+        // 3. Rétrocompatibilité totale avec l'ancienne structure plate (conditions = AND)
+        if (Array.isArray(rule.conditions) && rule.conditions.length > 0) {
+            return rule.conditions.every(cond => evaluateLogicNode(card, cond, prices));
+        }
+
+        return false;
     }
 
     function evaluateAllRules(card, rules, prices) {

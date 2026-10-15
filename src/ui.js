@@ -179,8 +179,9 @@
 
                     <div id="wm-tag-run-summary" style="font-size:11px;font-family:monospace;color:#94a3b8;min-height:40px;background:rgba(2,6,23,0.5);border-radius:6px;padding:8px;margin-bottom:8px;">Prêt.</div>
 
-                    <div style="display:flex;gap:6px;margin-bottom:6px;">
+                    <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
                         <button id="wm-tag-preview-btn" class="wm-panel-btn" style="flex:1;">🔍 Prévisualiser</button>
+                        <button id="wm-tag-details-btn" class="wm-panel-btn ghost" style="flex:1;display:none;border-color:#6366f1;color:#a5b4fc;">👁️ Détails (0)</button>
                         <button id="wm-tag-apply-btn" class="wm-panel-btn danger" style="flex:1;" disabled>🚀 Appliquer</button>
                     </div>
                     <div style="display:flex;gap:6px;">
