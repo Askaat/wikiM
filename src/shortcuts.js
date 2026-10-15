@@ -88,6 +88,121 @@
         }
 
         // ==========================================
+        // 1.2 RACCOURCI "U" (Tag "Tri" / "Trier" & Auto-Next)
+        // ==========================================
+        if (e.key.toLowerCase() === 'u') {
+            e.preventDefault();
+
+            // 1. Résolution de l'étiquette de tri (Gist mapping ou nom de tag)
+            let triTag = null;
+            const groups = typeof window.getTagGroups === 'function' ? window.getTagGroups() : [];
+            for (const g of groups) {
+                if (g.tagMapping) {
+                    for (const [slotId, tagId] of Object.entries(g.tagMapping)) {
+                        if (/tri/i.test(slotId) && tagId) {
+                            triTag = (window.wmTagsCache || []).find(t => t.id === tagId);
+                            if (triTag) break;
+                        }
+                    }
+                }
+                if (triTag) break;
+            }
+
+            if (!triTag) {
+                // Recherche directe dans le cache des étiquettes par nom
+                triTag = (window.wmTagsCache || []).find(t => /^(tri|trier)$/i.test(t.name.trim()));
+            }
+
+            if (!triTag) {
+                // Recherche plus souple contenant "tri"
+                triTag = (window.wmTagsCache || []).find(t => /tri/i.test(t.name));
+            }
+
+            if (!triTag) {
+                const msg = '⚠️ Étiquette "Tri" ou "Trier" introuvable. Créez-la ou associez-la dans votre Gist.';
+                if (typeof window.showWMToast === 'function') window.showWMToast(msg, false);
+                console.warn('[WM-Shortcuts]', msg);
+                return;
+            }
+
+            // 2. Détection de la carte active
+            const cardEl = document.querySelector('.w-72:hover') ||
+                           document.querySelector('.swiper-slide-active .w-72') ||
+                           document.querySelector('.w-72');
+
+            if (!cardEl) return;
+
+            const titleEl = cardEl.querySelector('h3') || cardEl.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+            const cardTitle = titleEl ? titleEl.textContent.trim() : '';
+
+            // 3. Résolution de l'identifiant physique user_card_id
+            let userCardId = null;
+            if (typeof window.getCardDataFromReact === 'function') {
+                const cardData = window.getCardDataFromReact(cardEl);
+                if (cardData) {
+                    if (cardData.card_id && window.wmCardIdToUserCardId?.has(cardData.card_id)) {
+                        userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                    } else if (window.wmCardIdToUserCardId?.has(cardData.id)) {
+                        userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                    } else {
+                        userCardId = cardData.userCardId || cardData.id;
+                    }
+                }
+            }
+
+            if (!userCardId) {
+                userCardId = cardEl.dataset.wmUuid || null;
+            }
+
+            // 4. Application du tag
+            if (userCardId && typeof window.wmApplyTag === 'function') {
+                window.wmApplyTag(userCardId, triTag.id).then(res => {
+                    if (res && res.ok) {
+                        console.log(`[WM-Shortcuts] 🏷️ Tag "${triTag.name}" posé sur "${cardTitle}"`);
+                    }
+                }).catch(err => {
+                    console.error('[WM-Shortcuts] ❌ Échec pose tag Tri:', err);
+                });
+            }
+
+            // Mise à jour visuelle immédiate du badge sur la carte
+            if (cardTitle) {
+                if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                if (!window.wmVisualTagsCache[cardTitle]) window.wmVisualTagsCache[cardTitle] = [];
+                if (!window.wmVisualTagsCache[cardTitle].some(t => t.id === triTag.id)) {
+                    window.wmVisualTagsCache[cardTitle].push({
+                        id: triTag.id,
+                        name: triTag.name,
+                        color: triTag.color || '#6366f1'
+                    });
+                }
+                if (typeof window.renderTagsOnAllCards === 'function') {
+                    window.renderTagsOnAllCards();
+                }
+            }
+
+            if (typeof window.showWMToast === 'function') {
+                window.showWMToast(`🏷️ ${triTag.name} : ${cardTitle.slice(0, 20)}`, true);
+            }
+
+            // 5. Avancement automatique vers la carte suivante
+            setTimeout(() => {
+                const rightArrowSvg = document.querySelector('svg polyline[points="9 18 15 12 9 6"]');
+                if (rightArrowSvg) {
+                    rightArrowSvg.closest('button').click();
+                } else {
+                    const continueBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Continuer' && !btn.disabled);
+                    if (continueBtn) {
+                        console.log("[WM-Debug] 🏁 Fin du paquet, on clique sur Continuer.");
+                        continueBtn.click();
+                    }
+                }
+            }, 180);
+
+            return;
+        }
+
+        // ==========================================
         // 1.5 RACCOURCI "O" (Auto-Prev & Bulk Delete)
         // ==========================================
         if (e.key.toLowerCase() === 'o') {
