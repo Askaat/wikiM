@@ -821,7 +821,7 @@
 
     window.wmVisualTagsCache = {}; // Cache global pour stocker les tags appliqués
 
-    async function handleRemoveVisualTag(userCardId, tagId, cardTitle, event) {
+    function handleRemoveVisualTag(userCardId, tagId, cardTitle, event) {
         if (event) {
             event.stopPropagation();
             event.preventDefault();
@@ -833,36 +833,46 @@
             return;
         }
 
-        try {
-            if (typeof window.wmRemoveTag === 'function') {
-                const res = await window.wmRemoveTag(userCardId, tagId);
+        // 1. Mise à jour optimiste immédiate (0 ms de délai ressenti)
+        if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(userCardId)) {
+            window.wmUserCardTagsCache.get(userCardId).delete(tagId);
+        }
+
+        let previousTags = null;
+        if (cardTitle && window.wmVisualTagsCache[cardTitle]) {
+            previousTags = [...window.wmVisualTagsCache[cardTitle]];
+            window.wmVisualTagsCache[cardTitle] = window.wmVisualTagsCache[cardTitle].filter(t => t.id !== tagId);
+            if (window.wmVisualTagsCache[cardTitle].length === 0) {
+                delete window.wmVisualTagsCache[cardTitle];
+            }
+        }
+
+        renderTagsOnAllCards();
+
+        const tagName = (window.wmTagsCache || []).find(t => t.id === tagId)?.name || 'Tag';
+        window.logToPanel(`🗑️ Tag "${tagName}" retiré de "${cardTitle}"`);
+        if (typeof window.showWMToast === 'function') {
+            window.showWMToast(`🗑️ ${tagName} retiré`, true);
+        }
+
+        // 2. Requête réseau exécutée en arrière-plan
+        if (typeof window.wmRemoveTag === 'function') {
+            window.wmRemoveTag(userCardId, tagId).then(res => {
                 if (res && res.ok === false) throw new Error(res.error || 'Erreur API');
-            }
-
-            // Mise à jour des caches locaux
-            if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(userCardId)) {
-                window.wmUserCardTagsCache.get(userCardId).delete(tagId);
-            }
-
-            if (cardTitle && window.wmVisualTagsCache[cardTitle]) {
-                window.wmVisualTagsCache[cardTitle] = window.wmVisualTagsCache[cardTitle].filter(t => t.id !== tagId);
-                if (window.wmVisualTagsCache[cardTitle].length === 0) {
-                    delete window.wmVisualTagsCache[cardTitle];
+            }).catch(e => {
+                console.error('[WM-Tags] ❌ Erreur suppression tag en arrière-plan :', e);
+                // Annulation / rollback en cas d'échec réseau
+                if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(userCardId)) {
+                    window.wmUserCardTagsCache.get(userCardId).add(tagId);
                 }
-            }
-
-            renderTagsOnAllCards();
-
-            const tagName = (window.wmTagsCache || []).find(t => t.id === tagId)?.name || 'Tag';
-            window.logToPanel(`🗑️ Tag "${tagName}" retiré de "${cardTitle}"`);
-            if (typeof window.showWMToast === 'function') {
-                window.showWMToast(`🗑️ ${tagName} retiré`, true);
-            }
-        } catch (e) {
-            console.error('[WM-Tags] ❌ Erreur suppression tag :', e);
-            if (typeof window.showWMToast === 'function') {
-                window.showWMToast(`Erreur suppression : ${e.message}`, false);
-            }
+                if (cardTitle && previousTags) {
+                    window.wmVisualTagsCache[cardTitle] = previousTags;
+                }
+                renderTagsOnAllCards();
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`Erreur suppression : ${e.message}`, false);
+                }
+            });
         }
     }
 
