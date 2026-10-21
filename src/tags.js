@@ -615,13 +615,15 @@
 
                 const title = pc.wikipedia_title || pc.title;
 
+                const desc = pc.summary || pc.extract || pc.description || '';
                 const cardForEval = {
                     id: pc.id,
                     userCardId: physical.id,
                     title: title,
                     rarity: pc.rarity,
-                    category: pc.category,
-                    summary: pc.summary || pc.extract || pc.description || ''
+                    category: pc.category || desc,
+                    summary: desc,
+                    description: desc
                 };
 
                 const desiredTagIds = window.evaluateAllRules(cardForEval, activeRules, window.wmPrices);
@@ -930,7 +932,7 @@
             getter: (card) => card.rarity
         },
         'title': { label: 'Titre', type: 'string', getter: (card) => card.title || '' },
-        'category': { label: 'Catégorie', type: 'string', getter: (card) => card.category || '' },
+        'category': { label: 'Catégorie', type: 'string', getter: (card) => card.category || card.summary || card.description || card.extract || '' },
         'description': { label: 'Description', type: 'string', getter: (card) => card.summary || '' }
     };
 

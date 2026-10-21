@@ -40,6 +40,160 @@
         .wm-empty-sales { color: #9ca3af; font-size: 10px; justify-content: center; font-style: italic; }
         .wm-loading-badge { color: #fbbf24; font-size: 10px; justify-content: center; font-style: italic; }
 
+        /* ===== Badges de tags visuels (clic direct pour supprimer) ===== */
+        .wm-visual-tags {
+            position: absolute;
+            top: 36px;
+            left: 8px;
+            z-index: 45;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            pointer-events: auto;
+        }
+        .wm-visual-tag-badge {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            width: fit-content;
+            max-width: 125px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            user-select: none;
+            cursor: pointer;
+            transition: transform 0.12s ease, opacity 0.12s ease, filter 0.12s ease;
+        }
+        .wm-visual-tag-badge:hover {
+            transform: scale(1.06);
+            filter: brightness(0.9) contrast(1.1);
+            opacity: 0.9;
+        }
+        .wm-visual-tag-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #000;
+        }
+
+        /* ===== Modal Raccourci K (Attribution Tag Manuel) ===== */
+        .wm-quicktag-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: wmFadeIn 0.15s ease;
+        }
+        .wm-quicktag-modal {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border: 1px solid rgba(99, 102, 241, 0.35);
+            border-radius: 14px;
+            width: 90%;
+            max-width: 360px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            color: #f8fafc;
+            box-shadow: 0 20px 45px rgba(0,0,0,0.7);
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .wm-quicktag-header {
+            padding: 12px 14px 8px 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        }
+        .wm-quicktag-title {
+            font-size: 13px;
+            font-weight: 800;
+            color: #f1f5f9;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .wm-quicktag-cardtitle {
+            font-size: 11px;
+            color: #fbbf24;
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .wm-quicktag-search {
+            width: 100%;
+            margin-top: 8px;
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 8px;
+            padding: 7px 10px;
+            color: #fff;
+            font-size: 12px;
+            outline: none;
+            box-sizing: border-box;
+        }
+        .wm-quicktag-search:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+        .wm-quicktag-list {
+            padding: 6px;
+            overflow-y: auto;
+            max-height: 280px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .wm-quicktag-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.12s ease;
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid transparent;
+            font-size: 12px;
+        }
+        .wm-quicktag-item:hover, .wm-quicktag-item.active {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateX(2px);
+        }
+        .wm-quicktag-item.already-applied {
+            opacity: 0.8;
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.4);
+        }
+        .wm-quicktag-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            margin-right: 8px;
+        }
+        .wm-quicktag-empty {
+            padding: 18px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 11px;
+        }
+        .wm-quicktag-footer {
+            padding: 8px 12px;
+            border-top: 1px solid rgba(148, 163, 184, 0.15);
+            font-size: 10px;
+            color: #94a3b8;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
         /* ===== Sniper (nouvelle version) ===== */
         .wm-sniper-row {
             display: flex; gap: 8px;

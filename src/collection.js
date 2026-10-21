@@ -341,7 +341,8 @@
             const cardId = item.card?.id || item.card_id;
             const title = item.card?.wikipedia_title || item.wikipedia_title || item.title;
             const rarity = item.card?.rarity;
-            const category = item.card?.category;
+            const desc = item.card?.summary || item.card?.description || item.card?.extract || item.summary || item.description || item.extract || '';
+            const category = item.card?.category || desc;
             const tags = Array.isArray(item.tags) ? item.tags : [];
 
             if (cardId && userCardId) {
@@ -660,12 +661,15 @@
                         const match = pageMap.get(normT);
                         if (match && match.id) {
                             const cid = match.card?.id || match.card_id || m.title;
+                            const desc = match.card?.summary || match.card?.description || match.card?.extract || '';
                             result.push({
                                 id: cid,
                                 userCardId: match.id,
                                 title: m.title,
                                 rarity: match.card?.rarity,
-                                category: match.card?.category,
+                                category: match.card?.category || desc,
+                                summary: desc,
+                                description: desc,
                                 existingTags: Array.isArray(match.tags) ? new Set(match.tags.map(t => t.id)) : null
                             });
                         } else {
@@ -691,7 +695,11 @@
         if (!cond || !cond.field) return false;
         const field = window.WM_RULE_FIELDS[cond.field];
         if (!field) return false;
-        const value = field.getter(card, prices);
+        let value = field.getter(card, prices);
+        // Si la catégorie est nulle ou vide, repli par défaut sur la description
+        if (cond.field === 'category' && (!value || String(value).trim() === '')) {
+            value = card.summary || card.description || card.extract || '';
+        }
         if (value === null || value === undefined) return false;
         const op = window.WM_RULE_OPERATORS[cond.operator];
         if (!op) return false;
@@ -777,7 +785,8 @@
                             const cId = isUserCard ? (c.card?.id || c.card_id || c.id) : (c.id || c.card_id);
                             const title = c.wikipedia_title || c.card?.wikipedia_title || c.title;
                             const rarity = c.rarity || c.card?.rarity;
-                            const category = c.category || c.card?.category;
+                            const desc = c.summary || c.card?.summary || c.description || c.card?.description || c.extract || c.card?.extract || '';
+                            const category = c.category || c.card?.category || desc;
                             const tags = Array.isArray(c.tags) ? c.tags : (Array.isArray(c.card?.tags) ? c.card.tags : []);
 
                             foundCard = {
@@ -786,6 +795,8 @@
                                 title: title,
                                 rarity: rarity,
                                 category: category,
+                                summary: desc,
+                                description: desc,
                                 tags: tags
                             };
                             break;
@@ -810,6 +821,51 @@
 
     window.wmVisualTagsCache = {}; // Cache global pour stocker les tags appliqués
 
+    async function handleRemoveVisualTag(userCardId, tagId, cardTitle, event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+
+        if (!userCardId) {
+            console.warn('[WM-Tags] Impossible de supprimer le tag : userCardId manquant');
+            if (typeof window.showWMToast === 'function') window.showWMToast('Erreur : ID physique introuvable', false);
+            return;
+        }
+
+        try {
+            if (typeof window.wmRemoveTag === 'function') {
+                const res = await window.wmRemoveTag(userCardId, tagId);
+                if (res && res.ok === false) throw new Error(res.error || 'Erreur API');
+            }
+
+            // Mise à jour des caches locaux
+            if (window.wmUserCardTagsCache && window.wmUserCardTagsCache.has(userCardId)) {
+                window.wmUserCardTagsCache.get(userCardId).delete(tagId);
+            }
+
+            if (cardTitle && window.wmVisualTagsCache[cardTitle]) {
+                window.wmVisualTagsCache[cardTitle] = window.wmVisualTagsCache[cardTitle].filter(t => t.id !== tagId);
+                if (window.wmVisualTagsCache[cardTitle].length === 0) {
+                    delete window.wmVisualTagsCache[cardTitle];
+                }
+            }
+
+            renderTagsOnAllCards();
+
+            const tagName = (window.wmTagsCache || []).find(t => t.id === tagId)?.name || 'Tag';
+            window.logToPanel(`🗑️ Tag "${tagName}" retiré de "${cardTitle}"`);
+            if (typeof window.showWMToast === 'function') {
+                window.showWMToast(`🗑️ ${tagName} retiré`, true);
+            }
+        } catch (e) {
+            console.error('[WM-Tags] ❌ Erreur suppression tag :', e);
+            if (typeof window.showWMToast === 'function') {
+                window.showWMToast(`Erreur suppression : ${e.message}`, false);
+            }
+        }
+    }
+
     function renderTagsOnAllCards() {
         const cards = document.querySelectorAll('.w-72');
         cards.forEach(card => {
@@ -819,20 +875,57 @@
             const title = titleEl.textContent.trim();
             const tags = window.wmVisualTagsCache[title];
 
-            if (tags && tags.length > 0) {
-                let tagContainer = card.querySelector('.wm-visual-tags');
+            let tagContainer = card.querySelector('.wm-visual-tags');
 
+            if (tags && tags.length > 0) {
                 if (!tagContainer) {
                     tagContainer = document.createElement('div');
                     tagContainer.className = 'wm-visual-tags';
-                    tagContainer.style.cssText = 'position: absolute; top: 36px; left: 8px; z-index: 30; display: flex; flex-direction: column; gap: 4px; pointer-events: none;';
                     card.appendChild(tagContainer);
                 }
 
-                // Rendu des badges avec l'esthétique du jeu
-                tagContainer.innerHTML = tags.map(t =>
-                    `<div style="background-color: ${t.color}; color: #000; padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: bold; box-shadow: 0 0 8px ${t.color}80; text-transform: uppercase; width: fit-content; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${t.name}</div>`
-                ).join('');
+                // Récupération de l\'userCardId de la carte pour permettre la suppression
+                let userCardId = null;
+                if (typeof window.getCardDataFromReact === 'function') {
+                    const cardData = window.getCardDataFromReact(card);
+                    if (cardData) {
+                        if (cardData.card_id && window.wmCardIdToUserCardId?.has(cardData.card_id)) {
+                            userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                        } else if (window.wmCardIdToUserCardId?.has(cardData.id)) {
+                            userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                        } else {
+                            userCardId = cardData.userCardId || cardData.id;
+                        }
+                    }
+                }
+                if (!userCardId) {
+                    userCardId = card.dataset.wmUuid || null;
+                }
+                if (!userCardId && title) {
+                    userCardId = window.wmCardIdToUserCardId?.get(title) || null;
+                }
+
+                // Rendu des badges (clic direct sur le badge pour supprimer le tag)
+                tagContainer.innerHTML = '';
+                tags.forEach(t => {
+                    const badge = document.createElement('div');
+                    badge.className = 'wm-visual-tag-badge';
+                    badge.style.backgroundColor = t.color || '#a78bfa';
+                    badge.style.boxShadow = `0 0 8px ${t.color || '#a78bfa'}80`;
+                    badge.title = `Cliquer pour retirer "${t.name}"`;
+                    badge.addEventListener('click', (ev) => {
+                        handleRemoveVisualTag(userCardId, t.id, title, ev);
+                    });
+
+                    const labelSpan = document.createElement('span');
+                    labelSpan.className = 'wm-visual-tag-name';
+                    labelSpan.textContent = t.name;
+                    badge.appendChild(labelSpan);
+
+                    tagContainer.appendChild(badge);
+                });
+            } else if (tagContainer) {
+                tagContainer.remove();
             }
         });
     }
@@ -1631,6 +1724,7 @@
     window.evaluateRule = WikiM.evaluateRule = evaluateRule;
     window.evaluateAllRules = WikiM.evaluateAllRules = evaluateAllRules;
     window.getCardDataFromReact = WikiM.getCardDataFromReact = getCardDataFromReact;
+    window.handleRemoveVisualTag = WikiM.handleRemoveVisualTag = handleRemoveVisualTag;
     window.renderTagsOnAllCards = WikiM.renderTagsOnAllCards = renderTagsOnAllCards;
     window.renderPricesOnAllCards = WikiM.renderPricesOnAllCards = renderPricesOnAllCards;
     window.handleQuickDiscard = WikiM.handleQuickDiscard = handleQuickDiscard;

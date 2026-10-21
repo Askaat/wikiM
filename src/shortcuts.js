@@ -88,7 +88,7 @@
         }
 
         // ==========================================
-        // 1.2 RACCOURCI "U" (Tag "Tri" / "Trier" & Auto-Next)
+        // 1.2 RACCOURCI "U" (Toggle Tag "Tri" / "Trier" & Auto-Next)
         // ==========================================
         if (e.key.toLowerCase() === 'u') {
             e.preventDefault();
@@ -154,35 +154,75 @@
                 userCardId = cardEl.dataset.wmUuid || null;
             }
 
-            // 4. Application du tag
-            if (userCardId && typeof window.wmApplyTag === 'function') {
-                window.wmApplyTag(userCardId, triTag.id).then(res => {
-                    if (res && res.ok) {
-                        console.log(`[WM-Shortcuts] 🏷️ Tag "${triTag.name}" posé sur "${cardTitle}"`);
-                    }
-                }).catch(err => {
-                    console.error('[WM-Shortcuts] ❌ Échec pose tag Tri:', err);
-                });
+            // 4. Déterminer si le tag Tri est déjà présent sur la carte (pour Toggle)
+            let isAlreadyTagged = false;
+            if (userCardId && window.wmUserCardTagsCache?.has(userCardId)) {
+                isAlreadyTagged = window.wmUserCardTagsCache.get(userCardId).has(triTag.id);
+            }
+            if (!isAlreadyTagged && cardTitle && window.wmVisualTagsCache?.[cardTitle]) {
+                isAlreadyTagged = window.wmVisualTagsCache[cardTitle].some(t => t.id === triTag.id);
             }
 
-            // Mise à jour visuelle immédiate du badge sur la carte
-            if (cardTitle) {
-                if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
-                if (!window.wmVisualTagsCache[cardTitle]) window.wmVisualTagsCache[cardTitle] = [];
-                if (!window.wmVisualTagsCache[cardTitle].some(t => t.id === triTag.id)) {
-                    window.wmVisualTagsCache[cardTitle].push({
-                        id: triTag.id,
-                        name: triTag.name,
-                        color: triTag.color || '#6366f1'
+            if (isAlreadyTagged) {
+                // RETRAIT DU TAG
+                if (userCardId && typeof window.wmRemoveTag === 'function') {
+                    window.wmRemoveTag(userCardId, triTag.id).then(res => {
+                        if (res && res.ok) {
+                            console.log(`[WM-Shortcuts] 🗑️ Tag "${triTag.name}" retiré de "${cardTitle}"`);
+                        }
+                    }).catch(err => {
+                        console.error('[WM-Shortcuts] ❌ Échec retrait tag Tri:', err);
                     });
+                }
+                if (userCardId && window.wmUserCardTagsCache?.has(userCardId)) {
+                    window.wmUserCardTagsCache.get(userCardId).delete(triTag.id);
+                }
+                if (cardTitle && window.wmVisualTagsCache?.[cardTitle]) {
+                    window.wmVisualTagsCache[cardTitle] = window.wmVisualTagsCache[cardTitle].filter(t => t.id !== triTag.id);
+                    if (window.wmVisualTagsCache[cardTitle].length === 0) {
+                        delete window.wmVisualTagsCache[cardTitle];
+                    }
                 }
                 if (typeof window.renderTagsOnAllCards === 'function') {
                     window.renderTagsOnAllCards();
                 }
-            }
-
-            if (typeof window.showWMToast === 'function') {
-                window.showWMToast(`🏷️ ${triTag.name} : ${cardTitle.slice(0, 20)}`, true);
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`🗑️ ${triTag.name} retiré : ${cardTitle.slice(0, 20)}`, true);
+                }
+            } else {
+                // AJOUT DU TAG
+                if (userCardId && typeof window.wmApplyTag === 'function') {
+                    window.wmApplyTag(userCardId, triTag.id).then(res => {
+                        if (res && res.ok) {
+                            console.log(`[WM-Shortcuts] 🏷️ Tag "${triTag.name}" posé sur "${cardTitle}"`);
+                        }
+                    }).catch(err => {
+                        console.error('[WM-Shortcuts] ❌ Échec pose tag Tri:', err);
+                    });
+                }
+                if (userCardId && window.wmUserCardTagsCache) {
+                    if (!window.wmUserCardTagsCache.has(userCardId)) {
+                        window.wmUserCardTagsCache.set(userCardId, new Set());
+                    }
+                    window.wmUserCardTagsCache.get(userCardId).add(triTag.id);
+                }
+                if (cardTitle) {
+                    if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                    if (!window.wmVisualTagsCache[cardTitle]) window.wmVisualTagsCache[cardTitle] = [];
+                    if (!window.wmVisualTagsCache[cardTitle].some(t => t.id === triTag.id)) {
+                        window.wmVisualTagsCache[cardTitle].push({
+                            id: triTag.id,
+                            name: triTag.name,
+                            color: triTag.color || '#6366f1'
+                        });
+                    }
+                    if (typeof window.renderTagsOnAllCards === 'function') {
+                        window.renderTagsOnAllCards();
+                    }
+                }
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`🏷️ ${triTag.name} : ${cardTitle.slice(0, 20)}`, true);
+                }
             }
 
             // 5. Avancement automatique vers la carte suivante
@@ -199,6 +239,23 @@
                 }
             }, 180);
 
+            return;
+        }
+
+        // ==========================================
+        // 1.3 RACCOURCI "K" (Menu Manuel Attribution Tag)
+        // ==========================================
+        if (e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+
+            // Détection de la carte active
+            const cardEl = document.querySelector('.w-72:hover') ||
+                           document.querySelector('.swiper-slide-active .w-72') ||
+                           document.querySelector('.w-72');
+
+            if (!cardEl) return;
+
+            openQuickTagModal(cardEl);
             return;
         }
 
@@ -326,5 +383,250 @@
         }
 
     }, true);
+
+    // ============================================================
+    // MENU POPUP RAPIDE POUR L'ATTRIBUTION DE TAG (TOUCHE K)
+    // ============================================================
+    async function openQuickTagModal(cardEl) {
+        if (!cardEl) return;
+        const existing = document.getElementById('wm-quicktag-overlay');
+        if (existing) { existing.remove(); }
+
+        const titleEl = cardEl.querySelector('h3') || cardEl.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
+        const cardTitle = titleEl ? titleEl.textContent.trim() : 'Carte';
+
+        // Résolution de l'identifiant physique user_card_id
+        let userCardId = null;
+        if (typeof window.getCardDataFromReact === 'function') {
+            const cardData = window.getCardDataFromReact(cardEl);
+            if (cardData) {
+                if (cardData.card_id && window.wmCardIdToUserCardId?.has(cardData.card_id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                } else if (window.wmCardIdToUserCardId?.has(cardData.id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                } else {
+                    userCardId = cardData.userCardId || cardData.id;
+                }
+            }
+        }
+        if (!userCardId) {
+            userCardId = cardEl.dataset.wmUuid || null;
+        }
+        if (!userCardId && cardTitle) {
+            userCardId = window.wmCardIdToUserCardId?.get(cardTitle) || null;
+        }
+
+        // Récupérer les tags actuels de la carte (fusion précise cache physique + cache visuel)
+        let currentTagIds = new Set();
+        if (cardTitle && window.wmVisualTagsCache?.[cardTitle]) {
+            window.wmVisualTagsCache[cardTitle].forEach(t => currentTagIds.add(t.id));
+        } else if (userCardId && window.wmUserCardTagsCache?.has(userCardId)) {
+            window.wmUserCardTagsCache.get(userCardId).forEach(id => currentTagIds.add(id));
+        }
+
+        // S'assurer que le cache des tags est chargé
+        if ((!Array.isArray(window.wmTagsCache) || window.wmTagsCache.length === 0) && typeof window.wmFetchTags === 'function') {
+            try { await window.wmFetchTags(); } catch (err) {}
+        }
+
+        const tagsList = Array.isArray(window.wmTagsCache) ? [...window.wmTagsCache] : [];
+        tagsList.sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+
+        const overlay = document.createElement('div');
+        overlay.id = 'wm-quicktag-overlay';
+        overlay.className = 'wm-quicktag-overlay';
+        overlay.innerHTML = `
+            <div class="wm-quicktag-modal" role="dialog" aria-modal="true">
+                <div class="wm-quicktag-header">
+                    <div class="wm-quicktag-title">
+                        <span>🏷️ Assigner un tag (Touche K)</span>
+                        <button type="button" id="wm-quicktag-close" style="background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer;">✕</button>
+                    </div>
+                    <div class="wm-quicktag-cardtitle" title="${cardTitle}">Carte : ${cardTitle}</div>
+                    <input type="text" id="wm-quicktag-search-input" class="wm-quicktag-search" placeholder="Taper le nom du tag (ex: film)..." autocomplete="off" autofocus>
+                </div>
+                <div class="wm-quicktag-list" id="wm-quicktag-items"></div>
+                <div class="wm-quicktag-footer">
+                    <span>⬆️⬇️ Naviguer • ↵ Entrée pour basculer</span>
+                    <span style="font-family:monospace; color:#64748b;">Échap pour fermer</span>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        const searchInput = overlay.querySelector('#wm-quicktag-search-input');
+        const itemsContainer = overlay.querySelector('#wm-quicktag-items');
+        let selectedIndex = 0;
+        let filteredTags = [...tagsList];
+
+        function renderItems() {
+            itemsContainer.innerHTML = '';
+            if (filteredTags.length === 0) {
+                itemsContainer.innerHTML = '<div class="wm-quicktag-empty">Aucun tag trouvé.</div>';
+                return;
+            }
+
+            filteredTags.forEach((tag, idx) => {
+                const isApplied = currentTagIds.has(tag.id);
+                const itemEl = document.createElement('div');
+                itemEl.className = 'wm-quicktag-item' + (idx === selectedIndex ? ' active' : '') + (isApplied ? ' already-applied' : '');
+                itemEl.dataset.tagId = tag.id;
+                itemEl.innerHTML = `
+                    <div style="display:flex; align-items:center; overflow:hidden;">
+                        <span class="wm-quicktag-dot" style="background:${tag.color || '#6366f1'};"></span>
+                        <span style="font-weight:700; color:#f8fafc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${tag.name}</span>
+                    </div>
+                    <span style="font-size:11px; font-weight:700; color:${isApplied ? '#34d399' : '#64748b'};">
+                        ${isApplied ? '✓ Actif' : '+ Ajouter'}
+                    </span>
+                `;
+
+                itemEl.addEventListener('mouseenter', () => {
+                    selectedIndex = idx;
+                    updateActiveItem();
+                });
+
+                itemEl.addEventListener('click', () => {
+                    toggleTagOnCard(tag);
+                });
+
+                itemsContainer.appendChild(itemEl);
+            });
+
+            scrollToActive();
+        }
+
+        function updateActiveItem() {
+            const allItems = itemsContainer.querySelectorAll('.wm-quicktag-item');
+            allItems.forEach((el, idx) => {
+                el.classList.toggle('active', idx === selectedIndex);
+            });
+            scrollToActive();
+        }
+
+        function scrollToActive() {
+            const activeEl = itemsContainer.children[selectedIndex];
+            if (activeEl) {
+                activeEl.scrollIntoView({ block: 'nearest' });
+            }
+        }
+
+        async function toggleTagOnCard(tag) {
+            const isApplied = currentTagIds.has(tag.id);
+
+            if (isApplied) {
+                // Retrait
+                currentTagIds.delete(tag.id);
+                if (userCardId && typeof window.wmRemoveTag === 'function') {
+                    window.wmRemoveTag(userCardId, tag.id).catch(e => console.error('[WM-QuickTag] Erreur retrait:', e));
+                }
+                if (userCardId && window.wmUserCardTagsCache?.has(userCardId)) {
+                    window.wmUserCardTagsCache.get(userCardId).delete(tag.id);
+                }
+                if (cardTitle && window.wmVisualTagsCache?.[cardTitle]) {
+                    window.wmVisualTagsCache[cardTitle] = window.wmVisualTagsCache[cardTitle].filter(t => t.id !== tag.id);
+                    if (window.wmVisualTagsCache[cardTitle].length === 0) {
+                        delete window.wmVisualTagsCache[cardTitle];
+                    }
+                }
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`🗑️ ${tag.name} retiré`, true);
+                }
+            } else {
+                // Ajout
+                currentTagIds.add(tag.id);
+                if (userCardId && typeof window.wmApplyTag === 'function') {
+                    window.wmApplyTag(userCardId, tag.id).catch(e => console.error('[WM-QuickTag] Erreur ajout:', e));
+                }
+                if (userCardId && window.wmUserCardTagsCache) {
+                    if (!window.wmUserCardTagsCache.has(userCardId)) {
+                        window.wmUserCardTagsCache.set(userCardId, new Set());
+                    }
+                    window.wmUserCardTagsCache.get(userCardId).add(tag.id);
+                }
+                if (cardTitle) {
+                    if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                    if (!window.wmVisualTagsCache[cardTitle]) window.wmVisualTagsCache[cardTitle] = [];
+                    if (!window.wmVisualTagsCache[cardTitle].some(t => t.id === tag.id)) {
+                        window.wmVisualTagsCache[cardTitle].push({
+                            id: tag.id,
+                            name: tag.name,
+                            color: tag.color || '#6366f1'
+                        });
+                    }
+                }
+                if (typeof window.showWMToast === 'function') {
+                    window.showWMToast(`🏷️ ${tag.name} assigné`, true);
+                }
+            }
+
+            if (typeof window.renderTagsOnAllCards === 'function') {
+                window.renderTagsOnAllCards();
+            }
+
+            // Rafraîchir l'affichage du menu
+            renderItems();
+        }
+
+        function filterTags(query) {
+            const q = query.trim().toLowerCase();
+            if (!q) {
+                filteredTags = [...tagsList];
+            } else {
+                // Trier par pertinence : commence par query d'abord, puis contient
+                const startsWith = [];
+                const contains = [];
+                tagsList.forEach(t => {
+                    const nameLow = t.name.toLowerCase();
+                    if (nameLow.startsWith(q)) {
+                        startsWith.push(t);
+                    } else if (nameLow.includes(q)) {
+                        contains.push(t);
+                    }
+                });
+                filteredTags = [...startsWith, ...contains];
+            }
+            selectedIndex = 0;
+            renderItems();
+        }
+
+        searchInput.addEventListener('input', (ev) => {
+            filterTags(ev.target.value);
+        });
+
+        searchInput.addEventListener('keydown', (ev) => {
+            if (ev.key === 'ArrowDown') {
+                ev.preventDefault();
+                if (filteredTags.length > 0) {
+                    selectedIndex = (selectedIndex + 1) % filteredTags.length;
+                    updateActiveItem();
+                }
+            } else if (ev.key === 'ArrowUp') {
+                ev.preventDefault();
+                if (filteredTags.length > 0) {
+                    selectedIndex = (selectedIndex - 1 + filteredTags.length) % filteredTags.length;
+                    updateActiveItem();
+                }
+            } else if (ev.key === 'Enter') {
+                ev.preventDefault();
+                if (filteredTags.length > 0 && filteredTags[selectedIndex]) {
+                    toggleTagOnCard(filteredTags[selectedIndex]);
+                }
+            } else if (ev.key === 'Escape') {
+                ev.preventDefault();
+                overlay.remove();
+            }
+        });
+
+        overlay.querySelector('#wm-quicktag-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) overlay.remove();
+        });
+
+        // Premier rendu
+        renderItems();
+        setTimeout(() => searchInput.focus(), 50);
+    }
 
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

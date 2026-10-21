@@ -5,16 +5,33 @@
     'use strict';
 
     // ============================================================
+    // TIMER ANTI-BRIDAGE ARRIÈRE-PLAN (Web Worker)
+    // ============================================================
+    /**
+     * Crée un intervalle piloté par un Web Worker pour éviter que le navigateur
+     * ne ralentisse la boucle du sniper quand l'onglet est en arrière-plan.
+     */
+    function createUnthrottledInterval(callback, ms) {
+        try {
+            const blob = new Blob([
+                `setInterval(() => postMessage('tick'), ${ms});`
+            ], { type: 'application/javascript' });
+            const worker = new Worker(URL.createObjectURL(blob));
+            worker.onmessage = () => callback();
+            return worker;
+        } catch (e) {
+            // Fallback classique si les Blob Workers sont bloqués par la CSP
+            return setInterval(callback, ms);
+        }
+    }
+
+    // ============================================================
     // SNIPER — CONFIGURATION (par enchère)
     // ============================================================
     const SNIPER_PER_AUCTION_KEY = 'wmSniperPerAuction';
 
     /**
-     * Structure : { [auctionId]: { maxBid, trigger, step, enabled } }
-     *   maxBid  : plafond de dépense (WB)
-     *   trigger : secondes restantes pour commencer à surveiller (ex: 20)
-     *   step    : intervalle de re-vérification en secondes (ex: 3)
-     *   enabled : sniper actif sur cette enchère
+     * Structure : { [auctionId]: { maxBid, trigger, step, enabled, endAt, bidCount, lastBidAt } }
      */
     function getAllSniperConfigs() {
         try { return JSON.parse(localStorage.getItem(SNIPER_PER_AUCTION_KEY) || '{}'); }
@@ -26,29 +43,52 @@
     function getSniperConfigFor(auctionId) {
         if (!auctionId) return null;
         const all = getAllSniperConfigs();
-        return all[auctionId] || { maxBid: 100, trigger: 20, step: 3, enabled: false };
+        return {
+            maxBid: 100,
+            trigger: 20,
+            step: 3,
+            enabled: false,
+            bidCount: 0,
+            lastBidAt: 0,
+            ...(all[auctionId] || {})
+        };
     }
     function setSniperConfigFor(auctionId, patch) {
         if (!auctionId) return;
         const all = getAllSniperConfigs();
-        const current = all[auctionId] || { maxBid: 100, trigger: 20, step: 3, enabled: false };
+        const current = getSniperConfigFor(auctionId);
         all[auctionId] = { ...current, ...patch };
         saveAllSniperConfigs(all);
     }
 
-    // État runtime par enchère
+    // État runtime par enchère (Sniper)
     const sniperRuntime = {};
     function getSniperRuntime(auctionId) {
         if (!sniperRuntime[auctionId]) {
+            const cfg = getSniperConfigFor(auctionId);
             sniperRuntime[auctionId] = {
-                lastBidAt: 0,
+                lastBidAt: cfg ? (cfg.lastBidAt || 0) : 0,
                 lastCheckAt: 0,
                 inFlight: false,
-                lastStatus: 'idle',
-                bidCount: 0
+                lastStatus: cfg && cfg.enabled ? 'waiting' : 'idle',
+                bidCount: cfg ? (cfg.bidCount || 0) : 0,
+                confirmedEnded: false
             };
         }
         return sniperRuntime[auctionId];
+    }
+
+    // État runtime pour le Last-Second Check des enchères suivies
+    const trackedCheckRuntime = {};
+    function getTrackedCheckState(auctionId) {
+        if (!trackedCheckRuntime[auctionId]) {
+            trackedCheckRuntime[auctionId] = {
+                lastCheckAt: 0,
+                inFlight: false,
+                confirmedEnded: false
+            };
+        }
+        return trackedCheckRuntime[auctionId];
     }
 
     /** Formule officielle du site : max(ceil(1.1 * current_bid), current_bid + 1) */
@@ -89,26 +129,21 @@
     function injectSniperPanel() {
         const auctionId = getAuctionIdFromUrl();
         if (!auctionId) return;
-        // Retire l'ancien panneau (au cas où on change d'enchère sans recharger)
+
         const old = document.getElementById('wm-sniper-panel');
         if (old) old.remove();
 
         const cfg = getSniperConfigFor(auctionId);
 
-                // Trouve le <h2> "Historique des mises"
         const h2Hist = Array.from(document.querySelectorAll('h2')).find(h =>
             /historique\s+des\s+mises/i.test(h.textContent || '')
         );
 
-        // Si on ne trouve pas le h2, on abandonne (ne devrait pas arriver sur cette page)
         if (!h2Hist) {
             console.warn('[WM-Sniper] Impossible de trouver "Historique des mises"');
             return;
         }
 
-        // Le parent du h2 contient h2 + ul (le bloc "Historique")
-        // Le grand-parent (avec max-w-4xl) contient tout le contenu de la page d'enchère
-        // On veut insérer le panneau APRÈS le bloc Historique, dans le grand-parent
         const historiqueBlock = h2Hist.parentElement;
         const contentContainer = historiqueBlock.parentElement;
 
@@ -133,15 +168,15 @@
                 <div class="wm-sniper-row">
                     <div class="wm-sniper-field">
                         <label for="wm-sniper-max">Mise max (WB)</label>
-                        <input type="number" id="wm-sniper-max" min="1" step="1" value="${cfg.maxBid}" disabled>
+                        <input type="number" id="wm-sniper-max" min="1" step="1" value="${cfg.maxBid}">
                     </div>
                     <div class="wm-sniper-field">
                         <label for="wm-sniper-trigger">Trigger (s)</label>
-                        <input type="number" id="wm-sniper-trigger" min="1" max="600" step="1" value="${cfg.trigger}" disabled>
+                        <input type="number" id="wm-sniper-trigger" min="1" max="600" step="1" value="${cfg.trigger}">
                     </div>
                     <div class="wm-sniper-field">
                         <label for="wm-sniper-step">Pas (s)</label>
-                        <input type="number" id="wm-sniper-step" min="1" max="60" step="1" value="${cfg.step}" disabled>
+                        <input type="number" id="wm-sniper-step" min="1" max="60" step="1" value="${cfg.step}">
                     </div>
                 </div>
                 <div class="wm-sniper-status" id="wm-sniper-status">
@@ -152,10 +187,13 @@
             </div>
         `;
 
-        // Insertion APRÈS le bloc Historique, dans le conteneur max-w-4xl
         contentContainer.insertBefore(panel, historiqueBlock.nextSibling);
 
         document.getElementById('wm-sniper-enabled').addEventListener('change', async e => {
+            const rt = getSniperRuntime(auctionId);
+            rt.confirmedEnded = false;
+            rt.lastCheckAt = 0;
+
             if (e.target.checked) {
                 const auction = await fetchAuctionDetails(auctionId);
                 if (auction) {
@@ -163,44 +201,54 @@
                 } else {
                     setSniperConfigFor(auctionId, { enabled: true });
                 }
+                rt.lastStatus = 'waiting';
             } else {
                 setSniperConfigFor(auctionId, { enabled: false });
+                rt.lastStatus = 'idle';
             }
 
-            const rt = getSniperRuntime(auctionId);
-            rt.lastCheckAt = 0;
-            rt.lastStatus = e.target.checked ? 'waiting' : 'idle';
             updateSniperStatusUI();
             window.logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${auctionId.slice(0, 8)}`);
             renderTrackedAuctions();
         });
-        document.getElementById('wm-sniper-max').addEventListener('change', e => {
-            const v = Math.max(1, parseInt(e.target.value, 10) || 1);
-            e.target.value = v;
-            setSniperConfigFor(auctionId, { maxBid: v });
-            const rt = getSniperRuntime(auctionId);
-            rt.lastCheckAt = 0;
-            window.logToPanel(`🎯 Mise max : ${v} WB`);
-            renderTrackedAuctions();
-        });
-        document.getElementById('wm-sniper-trigger').addEventListener('change', e => {
-            const v = Math.max(1, parseInt(e.target.value, 10) || 1);
-            e.target.value = v;
-            setSniperConfigFor(auctionId, { trigger: v });
-            const rt = getSniperRuntime(auctionId);
-            rt.lastCheckAt = 0;
-            window.logToPanel(`🎯 Trigger : ${v}s`);
-            renderTrackedAuctions();
-        });
-        document.getElementById('wm-sniper-step').addEventListener('change', e => {
-            const v = Math.max(1, parseInt(e.target.value, 10) || 1);
-            e.target.value = v;
-            setSniperConfigFor(auctionId, { step: v });
-            const rt = getSniperRuntime(auctionId);
-            rt.lastCheckAt = 0;
-            window.logToPanel(`🎯 Pas : ${v}s`);
-            renderTrackedAuctions();
-        });
+
+        const bindField = (inputId, propKey, minVal, maxVal, logLabel, unit) => {
+            const el = document.getElementById(inputId);
+            if (!el) return;
+
+            const parseVal = (raw) => {
+                let v = parseInt(raw, 10);
+                if (isNaN(v) || v < minVal) v = minVal;
+                if (maxVal && v > maxVal) v = maxVal;
+                return v;
+            };
+
+            el.addEventListener('input', e => {
+                const raw = parseInt(e.target.value, 10);
+                if (!isNaN(raw) && raw >= minVal) {
+                    const v = maxVal ? Math.min(maxVal, raw) : raw;
+                    setSniperConfigFor(auctionId, { [propKey]: v });
+                    updateSniperStatusUI();
+                    renderTrackedAuctions();
+                }
+            });
+
+            el.addEventListener('change', e => {
+                const v = parseVal(e.target.value);
+                e.target.value = v;
+                setSniperConfigFor(auctionId, { [propKey]: v });
+                const rt = getSniperRuntime(auctionId);
+                rt.lastCheckAt = 0;
+                rt.confirmedEnded = false;
+                updateSniperStatusUI();
+                window.logToPanel(`🎯 ${logLabel} : ${v}${unit}`);
+                renderTrackedAuctions();
+            });
+        };
+
+        bindField('wm-sniper-max', 'maxBid', 1, null, 'Mise max', ' WB');
+        bindField('wm-sniper-trigger', 'trigger', 1, 600, 'Trigger', 's');
+        bindField('wm-sniper-step', 'step', 1, 60, 'Pas', 's');
 
         updateSniperStatusUI();
     }
@@ -217,10 +265,13 @@
         const maxEl = document.getElementById('wm-sniper-max');
         const trigEl = document.getElementById('wm-sniper-trigger');
         const stepEl = document.getElementById('wm-sniper-step');
+
         if (enabledEl && enabledEl.checked !== cfg.enabled) enabledEl.checked = cfg.enabled;
-        if (maxEl && parseInt(maxEl.value, 10) !== cfg.maxBid) maxEl.value = cfg.maxBid;
-        if (trigEl && parseInt(trigEl.value, 10) !== cfg.trigger) trigEl.value = cfg.trigger;
-        if (stepEl && parseInt(stepEl.value, 10) !== cfg.step) stepEl.value = cfg.step;
+        if (maxEl && document.activeElement !== maxEl && parseInt(maxEl.value, 10) !== cfg.maxBid) maxEl.value = cfg.maxBid;
+        if (trigEl && document.activeElement !== trigEl && parseInt(trigEl.value, 10) !== cfg.trigger) trigEl.value = cfg.trigger;
+        if (stepEl && document.activeElement !== stepEl && parseInt(stepEl.value, 10) !== cfg.step) stepEl.value = cfg.step;
+
+        updateSniperStatusUI();
     }
 
     function updateSniperStatusUI() {
@@ -259,6 +310,10 @@
                     label = `Mise max atteinte (${cfg.maxBid} WB)`;
                     color = '#ef4444';
                     break;
+                case 'ended':
+                    label = 'Enchère terminée';
+                    color = '#6b7280';
+                    break;
                 case 'error':
                     label = 'Erreur';
                     color = '#ef4444';
@@ -272,115 +327,183 @@
         statusText.textContent = label;
         dot.style.background = color;
 
+        const count = cfg.bidCount || rt.bidCount || 0;
+        const lastAt = cfg.lastBidAt || rt.lastBidAt || 0;
         if (meta) {
-            meta.textContent = `Mises effectuées : ${rt.bidCount}${rt.lastBidAt ? ' • dernière ' + new Date(rt.lastBidAt).toLocaleTimeString('fr-FR') : ''}`;
+            meta.textContent = `Mises effectuées : ${count}${lastAt ? ' • dernière ' + new Date(lastAt).toLocaleTimeString('fr-FR') : ''}`;
         }
     }
 
     // ============================================================
-    // SNIPER — BOUCLE PRINCIPALE
+    // SNIPER — MOTEUR D'EXÉCUTION PAR ENCHÈRE
     // ============================================================
-    setInterval(async () => {
-        const auctionId = getAuctionIdFromUrl();
-        if (!auctionId) return;
-
-        const cfg = getSniperConfigFor(auctionId);
-        if (!cfg || !cfg.enabled || !cfg.endAt) return;
+    async function tickSniperForAuction(auctionId) {
+        let cfg = getSniperConfigFor(auctionId);
+        if (!cfg || !cfg.enabled) return;
 
         const rt = getSniperRuntime(auctionId);
-        if (rt.inFlight) return;
+        if (rt.inFlight || rt.confirmedEnded) return;
+
+        const now = Date.now();
+        const isCurrentPage = getAuctionIdFromUrl() === auctionId;
+
+        // 1. Si endAt est manquant en config, on va le chercher sur l'API
+        if (!cfg.endAt) {
+            if (now - rt.lastCheckAt < 3000) return;
+            rt.lastCheckAt = now;
+            const initAuction = await fetchAuctionDetails(auctionId);
+            if (!initAuction || initAuction.status !== 'active') {
+                rt.confirmedEnded = true;
+                rt.lastStatus = 'ended';
+                if (isCurrentPage) updateSniperStatusUI();
+                return;
+            }
+            setSniperConfigFor(auctionId, { endAt: initAuction.end_at });
+            cfg = getSniperConfigFor(auctionId);
+        }
 
         const endMs = new Date(cfg.endAt).getTime();
-        const secondsLeft = Math.floor((endMs - Date.now()) / 1000);
+        const secondsLeft = Math.floor((endMs - now) / 1000);
 
-        // AVANT LE TRIGGER → aucune requête, on attend
+        // 2. AVANT LE TRIGGER → aucune requête, on attend
         if (secondsLeft > cfg.trigger) {
             if (rt.lastStatus !== 'waiting') {
                 rt.lastStatus = 'waiting';
-                updateSniperStatusUI();
+                if (isCurrentPage) updateSniperStatusUI();
             }
             return;
         }
 
-        if (secondsLeft <= 0) {
-            if (rt.lastStatus !== 'idle') {
-                rt.lastStatus = 'idle';
-                updateSniperStatusUI();
-            }
-            return;
-        }
-
-        // DANS LA FENÊTRE DE TIR → on fetch + on agit
-        const now = Date.now();
-        if (now - rt.lastCheckAt < cfg.step * 1000) return;
+        // 3. CADENCE DYNAMIQUE : dans les 12 dernières secondes (ou si <= 0s non confirmé),
+        // on force la vérification toutes les 1s pour ne jamais rater un snipe adverse.
+        const effectiveStepMs = (secondsLeft <= 12 ? 1 : cfg.step) * 1000;
+        if (now - rt.lastCheckAt < effectiveStepMs) return;
         rt.lastCheckAt = now;
 
+        // 4. VÉRIFICATION SERVEUR
         const auction = await fetchAuctionDetails(auctionId);
-        if (!auction || auction.status !== 'active') {
-             const fresh = await fetchAuctionDetails(auctionId);
-             if (fresh && fresh.end_at) {
-                 setSniperConfigFor(auctionId, { endAt: fresh.end_at });
-             }
-             return;
+        if (!auction) return;
+
+        if (auction.status !== 'active') {
+            rt.confirmedEnded = true;
+            rt.lastStatus = 'ended';
+            if (isCurrentPage) updateSniperStatusUI();
+            return;
         }
 
-        if (auction.end_at !== cfg.endAt) {
+        // Si l'enchère a été prolongée par une mise récente, on synchronise tout
+        if (auction.end_at && auction.end_at !== cfg.endAt) {
             setSniperConfigFor(auctionId, { endAt: auction.end_at });
+            cfg = getSniperConfigFor(auctionId);
+            const reminders = getReminders();
+            if (reminders[auctionId]) {
+                reminders[auctionId].endAt = auction.end_at;
+                reminders[auctionId].fired = false;
+                reminders[auctionId].confirmedEnded = false;
+                saveReminders(reminders);
+                renderTrackedAuctions();
+            }
+            window.logToPanel(`⏱️ Sniper : prolongation détectée jusqu'à ${new Date(auction.end_at).toLocaleTimeString('fr-FR')}`);
         }
 
-        const myUserId = W.wmAuth.userId;
+        const realSecondsLeft = Math.floor((new Date(auction.end_at).getTime() - Date.now()) / 1000);
+        if (realSecondsLeft > cfg.trigger) {
+            rt.lastStatus = 'waiting';
+            if (isCurrentPage) updateSniperStatusUI();
+            return;
+        }
+
+        const myUserId = W.wmAuth && W.wmAuth.userId;
         if (!myUserId) {
             rt.lastStatus = 'error';
-            updateSniperStatusUI();
+            if (isCurrentPage) updateSniperStatusUI();
             return;
         }
 
-        const isLeader = auction.current_bidder_id === myUserId;
-        if (isLeader) {
+        // 5. Sommes-nous déjà meneur ?
+        if (auction.current_bidder_id === myUserId) {
             rt.lastStatus = 'leader';
-            updateSniperStatusUI();
+            if (isCurrentPage) updateSniperStatusUI();
             return;
         }
 
+        // 6. Calcul de la mise minimale requise
         const minBid = getMinBid(auction);
         if (minBid > cfg.maxBid) {
-            rt.lastStatus = 'max_reached';
-            updateSniperStatusUI();
-            window.logToPanel(`🎯 Sniper STOP : mise min ${minBid} > max ${cfg.maxBid}`);
+            if (rt.lastStatus !== 'max_reached') {
+                rt.lastStatus = 'max_reached';
+                if (isCurrentPage) updateSniperStatusUI();
+                window.logToPanel(`🎯 Sniper STOP : mise min ${minBid} > max ${cfg.maxBid}`);
+            }
             return;
         }
 
-        if (now - rt.lastBidAt < 2000) return;
+        if (Date.now() - rt.lastBidAt < 1200) return;
 
+        // 7. TIR DU SNIPER avec latence humaine (200ms à 350ms)
         rt.inFlight = true;
         rt.lastStatus = 'bidding';
-        updateSniperStatusUI();
-        window.logToPanel(`🎯 SNIPE à ${secondsLeft}s : mise ${minBid} WB`);
+        if (isCurrentPage) updateSniperStatusUI();
 
-        const result = await placeBid(auctionId, minBid);
-        rt.inFlight = false;
+        try {
+            const humanDelay = 200 + Math.floor(Math.random() * 150);
+            await new Promise(resolve => setTimeout(resolve, humanDelay));
 
-        if (result.ok) {
-            rt.lastBidAt = Date.now();
-            rt.bidCount++;
-            window.logToPanel(`✅ Mise acceptée : ${minBid} WB (total: ${rt.bidCount})`);
-            if (result.data && typeof result.data.bidder_balance === 'number') {
-                window.recordBalance(result.data.bidder_balance, 'bid');
-            }
-            rt.lastStatus = 'watching';
+            window.logToPanel(`🎯 SNIPE à ${realSecondsLeft}s : mise ${minBid} WB (délai ${humanDelay}ms)`);
+            const result = await placeBid(auctionId, minBid);
 
-            setTimeout(async () => {
+            if (result.ok) {
+                const bidTime = Date.now();
+                rt.lastBidAt = bidTime;
+                rt.bidCount = (cfg.bidCount || rt.bidCount || 0) + 1;
+
+                // Sauvegarde dans localStorage pour persister après un F5
+                const newEndAt = (result.data && result.data.auction && result.data.auction.end_at)
+                    ? result.data.auction.end_at
+                    : cfg.endAt;
+                setSniperConfigFor(auctionId, {
+                    bidCount: rt.bidCount,
+                    lastBidAt: bidTime,
+                    endAt: newEndAt
+                });
+
+                window.logToPanel(`✅ Mise acceptée : ${minBid} WB (total: ${rt.bidCount})`);
+                if (result.data && typeof result.data.bidder_balance === 'number') {
+                    window.recordBalance(result.data.bidder_balance, 'bid');
+                }
+                rt.lastStatus = 'leader';
+
+                // Re-vérification rapide de l'heure de fin après notre propre mise
                 const updatedAuction = await fetchAuctionDetails(auctionId);
-                if (updatedAuction && updatedAuction.end_at !== cfg.endAt) {
+                if (updatedAuction && updatedAuction.end_at) {
                     setSniperConfigFor(auctionId, { endAt: updatedAuction.end_at });
                 }
-            }, 500);
-
-        } else {
-            window.logToPanel(`❌ Mise refusée : ${result.error}`);
-            rt.lastStatus = 'error';
+            } else {
+                window.logToPanel(`❌ Mise refusée : ${result.error}`);
+                rt.lastStatus = 'error';
+            }
+        } finally {
+            rt.inFlight = false;
+            if (isCurrentPage) updateSniperStatusUI();
         }
-        updateSniperStatusUI();
+    }
+
+    // Boucle principale pilotée par Web Worker (non bridée en arrière-plan)
+    createUnthrottledInterval(() => {
+        const allCfgs = getAllSniperConfigs();
+        const currentUrlId = getAuctionIdFromUrl();
+
+        // Exécute le sniper sur l'enchère de la page courante + toutes les enchères actives suivies
+        const activeIds = new Set(
+            Object.keys(allCfgs).filter(id => allCfgs[id] && allCfgs[id].enabled)
+        );
+        if (currentUrlId && allCfgs[currentUrlId]?.enabled) {
+            activeIds.add(currentUrlId);
+        }
+
+        activeIds.forEach(id => {
+            tickSniperForAuction(id);
+        });
     }, 1000);
 
     // ============================================================
@@ -413,12 +536,24 @@
     }
 
     // ============================================================
-    // RAPPELS ENCHÈRES
+    // RAPPELS ENCHÈRES & ANTI-TIMER FANTÔME
     // ============================================================
     function addReminder({ auctionId, cardTitle, endAt, triggerBefore, channels }) {
         const reminders = getReminders();
-        reminders[auctionId] = { auctionId, cardTitle, endAt, triggerBefore, channels, createdAt: Date.now(), fired: false };
+        reminders[auctionId] = {
+            auctionId,
+            cardTitle,
+            endAt,
+            triggerBefore,
+            channels,
+            createdAt: Date.now(),
+            fired: false,
+            confirmedEnded: false
+        };
         saveReminders(reminders);
+        if (trackedCheckRuntime[auctionId]) {
+            delete trackedCheckRuntime[auctionId];
+        }
         window.logToPanel(`🔔 Rappel ajouté : "${cardTitle}" à ${triggerBefore}s de la fin.`);
         renderTrackedAuctions();
         updateTrackBadge();
@@ -428,9 +563,12 @@
         const reminders = getReminders();
         delete reminders[auctionId];
         saveReminders(reminders);
+        if (trackedCheckRuntime[auctionId]) {
+            delete trackedCheckRuntime[auctionId];
+        }
         const toast = document.getElementById('wm-toast-' + auctionId);
         if (toast) toast.remove();
-        // Nettoie aussi la config sniper associée
+
         const all = getAllSniperConfigs();
         if (all[auctionId]) {
             delete all[auctionId];
@@ -452,6 +590,69 @@
         if (tabBadge) {
             if (count > 0) { tabBadge.textContent = count > 99 ? '99+' : count; tabBadge.classList.add('show'); }
             else tabBadge.classList.remove('show');
+        }
+    }
+
+    /**
+     * Vérification ciblée ("Last-Second Check") quand une enchère suivie arrive à < 15s ou 0s.
+     */
+    async function verifyTrackedAuctionEnd(auctionId) {
+        const state = getTrackedCheckState(auctionId);
+        const now = Date.now();
+        if (state.inFlight || state.confirmedEnded) return;
+        if (now - state.lastCheckAt < 5000) return;
+
+        state.inFlight = true;
+        state.lastCheckAt = now;
+
+        try {
+            const freshAuction = await fetchAuctionDetails(auctionId);
+            if (!freshAuction) return;
+
+            const reminders = getReminders();
+            const rem = reminders[auctionId];
+            if (!rem) return;
+
+            const freshEndMs = new Date(freshAuction.end_at).getTime();
+            const isStillActive = freshAuction.status === 'active' && freshEndMs > Date.now();
+
+            if (isStillActive && freshAuction.end_at !== rem.endAt) {
+                rem.endAt = freshAuction.end_at;
+                rem.fired = false;
+                rem.confirmedEnded = false;
+                if (freshAuction.current_bid !== undefined) {
+                    rem.lastBid = freshAuction.current_bid;
+                }
+                saveReminders(reminders);
+
+                setSniperConfigFor(auctionId, { endAt: freshAuction.end_at });
+                const rt = getSniperRuntime(auctionId);
+                rt.confirmedEnded = false;
+
+                const timerEl = document.querySelector(`.wm-tracked-timer[data-id="${auctionId}"]`);
+                if (timerEl) {
+                    timerEl.dataset.end = freshAuction.end_at;
+                    const newSecLeft = Math.max(0, Math.floor((freshEndMs - Date.now()) / 1000));
+                    timerEl.textContent = window.formatSec(newSecLeft);
+                    timerEl.classList.toggle('urgent', newSecLeft > 0 && newSecLeft <= rem.triggerBefore);
+                }
+
+                const timeStr = new Date(freshAuction.end_at).toLocaleTimeString('fr-FR');
+                window.logToPanel(`⏱️ Enchère prolongée jusqu'à ${timeStr} (${rem.cardTitle})`);
+                renderTrackedAuctions();
+            } else if (freshAuction.status !== 'active' || freshEndMs <= Date.now()) {
+                state.confirmedEnded = true;
+                rem.confirmedEnded = true;
+                saveReminders(reminders);
+
+                const timerEl = document.querySelector(`.wm-tracked-timer[data-id="${auctionId}"]`);
+                if (timerEl) {
+                    timerEl.textContent = 'Terminée';
+                    timerEl.classList.remove('urgent');
+                }
+            }
+        } finally {
+            state.inFlight = false;
         }
     }
 
@@ -504,7 +705,6 @@
                 btn.classList.remove('tracked');
                 btn.innerHTML = '<span>🔔</span> Suivre cette enchère';
             } else {
-                // Fetch uniquement au moment de l'action
                 const auction = await fetchAuctionDetails(auctionId);
                 if (!auction) {
                     window.logToPanel('❌ Impossible de récupérer les détails de l\'enchère');
@@ -577,13 +777,21 @@
             const secondsLeft = Math.floor((new Date(rem.endAt).getTime() - Date.now()) / 1000);
             const urgent = secondsLeft > 0 && secondsLeft <= rem.triggerBefore;
             const expired = secondsLeft <= 0;
+            const state = getTrackedCheckState(rem.auctionId);
+            const isConfirmedEnded = rem.confirmedEnded || state.confirmedEnded;
             const cfg = getSniperConfigFor(rem.auctionId);
+
+            let timerLabel = window.formatSec(secondsLeft);
+            if (expired) {
+                timerLabel = isConfirmedEnded ? 'Terminée' : 'Vérif...';
+            }
+
             return `
                 <div class="wm-tracked-item" data-id="${rem.auctionId}">
                     <div class="wm-tracked-header">
                         <span class="wm-tracked-title" title="${rem.cardTitle}">${rem.cardTitle}</span>
                         <span class="wm-tracked-timer ${urgent ? 'urgent' : ''}" data-end="${rem.endAt}" data-id="${rem.auctionId}">
-                            ${expired ? 'Terminée' : window.formatSec(secondsLeft)}
+                            ${timerLabel}
                         </span>
                     </div>
                     <div class="wm-tracked-info">
@@ -605,20 +813,25 @@
             `;
         }).join('');
 
-        // Bind listeners
         container.querySelectorAll('[data-action]').forEach(el => {
             if (el.tagName === 'INPUT') {
                 el.addEventListener('change', async (e) => {
                     const id = e.target.dataset.id;
+                    const rt = getSniperRuntime(id);
+                    rt.confirmedEnded = false;
+                    rt.lastCheckAt = 0;
+
                     if (e.target.checked) {
-                         const auction = await fetchAuctionDetails(id);
-                         if (auction) {
-                             setSniperConfigFor(id, { enabled: true, endAt: auction.end_at });
-                         } else {
-                             setSniperConfigFor(id, { enabled: true });
-                         }
+                        const auction = await fetchAuctionDetails(id);
+                        if (auction) {
+                            setSniperConfigFor(id, { enabled: true, endAt: auction.end_at });
+                        } else {
+                            setSniperConfigFor(id, { enabled: true });
+                        }
+                        rt.lastStatus = 'waiting';
                     } else {
-                         setSniperConfigFor(id, { enabled: false });
+                        setSniperConfigFor(id, { enabled: false });
+                        rt.lastStatus = 'idle';
                     }
 
                     window.logToPanel(`🎯 Sniper ${e.target.checked ? 'activé' : 'désactivé'} sur ${id.slice(0, 8)}`);
@@ -687,6 +900,7 @@
             window.logToPanel(`🎯 Config sniper mise à jour : max ${maxBid} WB, trigger ${trigger}s, pas ${step}s`);
             const rt = getSniperRuntime(auctionId);
             rt.lastCheckAt = 0;
+            rt.confirmedEnded = false;
             const currentAuctionId = getAuctionIdFromUrl();
             if (currentAuctionId === auctionId) syncSniperPanelFromConfig();
             close();
@@ -694,41 +908,76 @@
         });
     }
 
-    setInterval(() => {
+    // Ticker 1s piloté par Web Worker : timers + Last-Second Check (< 15s ou <= 0s)
+    createUnthrottledInterval(() => {
         document.querySelectorAll('.wm-tracked-timer').forEach(el => {
             const endAt = el.dataset.end;
+            const id = el.dataset.id;
             if (!endAt) return;
+
             const s = Math.floor((new Date(endAt).getTime() - Date.now()) / 1000);
-            el.textContent = s > 0 ? window.formatSec(s) : 'Terminée';
+            const state = id ? getTrackedCheckState(id) : null;
+
+            if (s > 0) {
+                el.textContent = window.formatSec(s);
+                if (s <= 15 && id) {
+                    verifyTrackedAuctionEnd(id);
+                }
+            } else {
+                if (id && state && !state.confirmedEnded) {
+                    el.textContent = 'Vérif...';
+                    verifyTrackedAuctionEnd(id);
+                } else {
+                    el.textContent = 'Terminée';
+                }
+            }
         });
     }, 1000);
 
-    setInterval(() => {
+    // Boucle 5s pilotée par Web Worker : rappels et nettoyage
+    createUnthrottledInterval(async () => {
         const reminders = getReminders();
         const now = Date.now();
         let changed = false;
+
         for (const id of Object.keys(reminders)) {
             const rem = reminders[id];
             const endMs = new Date(rem.endAt).getTime();
             const secondsLeft = Math.floor((endMs - now) / 1000);
-            if (!rem.fired && secondsLeft <= rem.triggerBefore && secondsLeft > 0) {
+            const state = getTrackedCheckState(id);
+
+            if (secondsLeft <= 15 && secondsLeft >= -60 && !rem.confirmedEnded && !state.confirmedEnded) {
+                await verifyTrackedAuctionEnd(id);
+                const freshReminders = getReminders();
+                if (freshReminders[id]) {
+                    Object.assign(rem, freshReminders[id]);
+                }
+            }
+
+            const updatedSecondsLeft = Math.floor((new Date(rem.endAt).getTime() - Date.now()) / 1000);
+
+            if (!rem.fired && updatedSecondsLeft <= rem.triggerBefore && updatedSecondsLeft > 0) {
                 const prefs = getPrefs();
                 const ch = rem.channels || { browser: prefs.browser, toast: prefs.toast, sound: prefs.sound };
                 const title = `Fin imminente — ${rem.cardTitle}`;
-                const body = `Se termine dans ${window.formatSec(secondsLeft)}`;
+                const body = `Se termine dans ${window.formatSec(updatedSecondsLeft)}`;
                 if (ch.browser && Notification.permission === 'granted') {
                     try {
                         const n = new Notification(title, { body, icon: 'https://www.wiki-masters.com/icon-192.png', tag: 'wm-auction-' + id });
                         n.onclick = () => { window.focus(); window.location.href = `/marketplace/${id}`; n.close(); };
                     } catch(e) {}
                 }
-                if (ch.toast) window.showToast({ title: 'Fin imminente', body: `"${rem.cardTitle}" arrive à échéance.`, auctionId: id, urgent: secondsLeft < 30, secondsLeft });
+                if (ch.toast) window.showToast({ title: 'Fin imminente', body: `"${rem.cardTitle}" arrive à échéance.`, auctionId: id, urgent: updatedSecondsLeft < 30, secondsLeft: updatedSecondsLeft });
                 if (ch.sound) window.playBeep();
-                rem.fired = true; changed = true;
-                window.logToPanel(`🔔 Rappel déclenché : ${rem.cardTitle} (${secondsLeft}s)`);
+                rem.fired = true;
+                changed = true;
+                window.logToPanel(`🔔 Rappel déclenché : ${rem.cardTitle} (${updatedSecondsLeft}s)`);
             }
-            if (secondsLeft < -300) {
-                delete reminders[id]; changed = true;
+
+            if (updatedSecondsLeft < -300 && (rem.confirmedEnded || state.confirmedEnded)) {
+                delete reminders[id];
+                delete trackedCheckRuntime[id];
+                changed = true;
                 const toast = document.getElementById('wm-toast-' + id);
                 if (toast) toast.remove();
             }
@@ -737,8 +986,6 @@
         renderTrackedAuctions();
         updateTrackBadge();
     }, 5000);
-
-
 
     // --- Cross-module exports ---
     window.getAllSniperConfigs = WikiM.getAllSniperConfigs = getAllSniperConfigs;
@@ -762,6 +1009,7 @@
     window.addReminder = WikiM.addReminder = addReminder;
     window.removeReminder = WikiM.removeReminder = removeReminder;
     window.updateTrackBadge = WikiM.updateTrackBadge = updateTrackBadge;
+    window.verifyTrackedAuctionEnd = WikiM.verifyTrackedAuctionEnd = verifyTrackedAuctionEnd;
     window.getAuctionIdFromUrl = WikiM.getAuctionIdFromUrl = getAuctionIdFromUrl;
     window.fetchAuctionDetails = WikiM.fetchAuctionDetails = fetchAuctionDetails;
     window.ensureTrackButton = WikiM.ensureTrackButton = ensureTrackButton;

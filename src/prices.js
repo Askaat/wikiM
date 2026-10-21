@@ -292,12 +292,15 @@
                 if (!cardId || !title) continue;
                 if (seenIds.has(cardId)) continue;
                 seenIds.add(cardId);
+                const desc = item?.card?.summary || item?.card?.description || item?.card?.extract || item?.summary || item?.description || item?.extract || '';
                 all.push({
                     id: cardId,
                     userCardId: userCardId,
                     title: title,
                     rarity: item?.card?.rarity,
-                    category: item?.card?.category,
+                    category: item?.card?.category || desc,
+                    summary: desc,
+                    description: desc
                 });
                 newOnes++;
             }
