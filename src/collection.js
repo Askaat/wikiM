@@ -879,40 +879,74 @@
     function renderTagsOnAllCards() {
         const cards = document.querySelectorAll('.w-72');
         cards.forEach(card => {
-            const titleEl = card.querySelector('h3') || card.closest('.flex-col, .flex-row')?.querySelector('h2, h3');
-            if (!titleEl) return;
+            let cardData = null;
+            if (typeof window.getCardDataFromReact === 'function') {
+                cardData = window.getCardDataFromReact(card);
+            }
 
-            const title = titleEl.textContent.trim();
-            const tags = window.wmVisualTagsCache[title];
+            const titleEl = card.querySelector('h3, h2, h1') || card.closest('.flex-col, .flex-row')?.querySelector('h1, h2, h3');
+            const title = (titleEl ? titleEl.textContent.trim() : null) || cardData?.title;
+            if (!title) return;
+
+            let userCardId = null;
+            if (cardData) {
+                if (cardData.card_id && window.wmCardIdToUserCardId?.has(cardData.card_id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
+                } else if (window.wmCardIdToUserCardId?.has(cardData.id)) {
+                    userCardId = window.wmCardIdToUserCardId.get(cardData.id);
+                } else {
+                    userCardId = cardData.userCardId || cardData.id;
+                }
+            }
+            if (!userCardId) {
+                userCardId = card.dataset.wmUuid || null;
+            }
+            if (!userCardId && title) {
+                userCardId = window.wmCardIdToUserCardId?.get(title) || null;
+            }
+
+            let tags = window.wmVisualTagsCache?.[title];
+
+            // 1. Synchronisation depuis React si pas en cache visuel (ex: rafraichissement collection)
+            if ((!tags || tags.length === 0) && cardData && Array.isArray(cardData.tags) && cardData.tags.length > 0) {
+                tags = cardData.tags.map(t => ({
+                    id: t.id,
+                    name: t.name,
+                    color: t.color || '#a78bfa'
+                }));
+                if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                window.wmVisualTagsCache[title] = tags;
+                if (userCardId && window.wmUserCardTagsCache) {
+                    window.wmUserCardTagsCache.set(userCardId, new Set(cardData.tags.map(t => t.id)));
+                }
+            }
+
+            // 2. Synchronisation depuis wmUserCardTagsCache
+            if ((!tags || tags.length === 0) && userCardId && window.wmUserCardTagsCache?.has(userCardId)) {
+                const tagIds = window.wmUserCardTagsCache.get(userCardId);
+                if (tagIds && tagIds.size > 0 && Array.isArray(window.wmTagsCache) && window.wmTagsCache.length > 0) {
+                    tags = Array.from(tagIds).map(id => {
+                        const tObj = window.wmTagsCache.find(t => t.id === id);
+                        return tObj ? { id: tObj.id, name: tObj.name, color: tObj.color || '#a78bfa' } : null;
+                    }).filter(Boolean);
+                    if (tags.length > 0) {
+                        if (!window.wmVisualTagsCache) window.wmVisualTagsCache = {};
+                        window.wmVisualTagsCache[title] = tags;
+                    }
+                }
+            }
 
             let tagContainer = card.querySelector('.wm-visual-tags');
 
             if (tags && tags.length > 0) {
+                if (getComputedStyle(card).position === 'static') {
+                    card.style.position = 'relative';
+                }
+
                 if (!tagContainer) {
                     tagContainer = document.createElement('div');
                     tagContainer.className = 'wm-visual-tags';
                     card.appendChild(tagContainer);
-                }
-
-                // Récupération de l\'userCardId de la carte pour permettre la suppression
-                let userCardId = null;
-                if (typeof window.getCardDataFromReact === 'function') {
-                    const cardData = window.getCardDataFromReact(card);
-                    if (cardData) {
-                        if (cardData.card_id && window.wmCardIdToUserCardId?.has(cardData.card_id)) {
-                            userCardId = window.wmCardIdToUserCardId.get(cardData.card_id);
-                        } else if (window.wmCardIdToUserCardId?.has(cardData.id)) {
-                            userCardId = window.wmCardIdToUserCardId.get(cardData.id);
-                        } else {
-                            userCardId = cardData.userCardId || cardData.id;
-                        }
-                    }
-                }
-                if (!userCardId) {
-                    userCardId = card.dataset.wmUuid || null;
-                }
-                if (!userCardId && title) {
-                    userCardId = window.wmCardIdToUserCardId?.get(title) || null;
                 }
 
                 // Rendu des badges (clic direct sur le badge pour supprimer le tag)

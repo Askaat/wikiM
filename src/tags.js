@@ -1334,6 +1334,60 @@
         }
     }
 
+    async function syncAllSubscribedGroups(silent = true) {
+        const groups = getTagGroups();
+        const subGroups = groups.filter(g => g.isSubscribed);
+        if (subGroups.length === 0) return;
+
+        const gistIds = [...new Set(subGroups.map(g => g.gistId || localStorage.getItem(WM_SHARED_GIST_ID_KEY)).filter(Boolean))];
+        if (gistIds.length === 0) return;
+
+        let updatedAny = false;
+        for (const gistId of gistIds) {
+            try {
+                const catalog = await fetchSharedGistCatalog(gistId);
+                const currentGroups = getTagGroups();
+                currentGroups.forEach((g, gIdx) => {
+                    const targetGistId = g.gistId || localStorage.getItem(WM_SHARED_GIST_ID_KEY);
+                    if (!g.isSubscribed || targetGistId !== gistId) return;
+
+                    const remoteGroup = (catalog.groups || []).find(rg => rg.id === g.sharedGroupId);
+                    if (!remoteGroup) return;
+
+                    // Si des slots requis ne sont pas mappés, on n'écrase pas silencieusement
+                    const unmappedSlots = (remoteGroup.requiredTags || []).filter(
+                        slot => !g.tagMapping || !g.tagMapping[slot.slotId]
+                    );
+                    if (unmappedSlots.length > 0) return;
+
+                    currentGroups[gIdx] = buildSubscribedLocalGroup(
+                        remoteGroup,
+                        catalog.gistId,
+                        catalog.updatedAt,
+                        g.tagMapping || {},
+                        g
+                    );
+                    updatedAny = true;
+                });
+
+                if (updatedAny) {
+                    saveTagGroups(currentGroups);
+                }
+            } catch (err) {
+                console.warn(`[WM-Gist] Erreur sync automatique Gist (${gistId}):`, err);
+            }
+        }
+
+        if (updatedAny) {
+            if (typeof renderRulesList === 'function') renderRulesList();
+            if (typeof window._wmRefreshGistCatalogUI === 'function') window._wmRefreshGistCatalogUI();
+            console.log('[WM-Gist] ✅ Règles des groupes abonnés synchronisées depuis le Gist.');
+            if (!silent && typeof window.logToPanel === 'function') {
+                window.logToPanel('✅ Groupes Gist synchronisés.');
+            }
+        }
+    }
+
     // ============================================================
     // UI ONGLET TAGS
     // ============================================================
@@ -1343,6 +1397,9 @@
         if (window.wmTagsCache.length === 0) {
             try { await wmFetchTags(); } catch(e) { console.warn('[WM-Tags] fetch échoué:', e); }
         }
+
+        // Synchronisation automatique des règles Gist au chargement du site
+        syncAllSubscribedGroups(true).catch(e => console.warn('[WM-Gist] Erreur sync auto au démarrage :', e));
 
         const autoTagCheckbox = document.getElementById('wm-toggle-autotag');
         if (autoTagCheckbox) {
@@ -1539,14 +1596,12 @@
 
             document.getElementById('wm-btn-gist-sync-all').addEventListener('click', async () => {
                 const groups = getTagGroups();
-                const subIndexes = groups.map((g, i) => g.isSubscribed ? i : -1).filter(i => i !== -1);
-                if (subIndexes.length === 0) {
+                const subCount = groups.filter(g => g.isSubscribed).length;
+                if (subCount === 0) {
                     alert("Vous n'avez encore aucun groupe abonné à synchroniser.");
                     return;
                 }
-                for (const idx of subIndexes) {
-                    await syncSubscribedGroup(idx);
-                }
+                await syncAllSubscribedGroups(false);
                 renderCatalogUI();
             });
 
@@ -2230,7 +2285,6 @@
                         <span style="font-size:13px;font-weight:bold;color:#e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                             ${escapeHtml(emoji)} ${escapeHtml(g.name)} (${(g.rules||[]).length})
                         </span>
-                        ${isSub ? `<span class="wm-sub-badge" title="Groupe synchronisé depuis un Gist (Lecture seule)">🌐 Abonné</span>` : ''}
                     </div>
                     <div style="display:flex; gap:5px; align-items:center; flex-shrink:0;">
                         ${isSub ? `
@@ -3393,4 +3447,5 @@
     window.fetchSharedGistCatalog = WikiM.fetchSharedGistCatalog = fetchSharedGistCatalog;
     window.openSharedGroupMappingModal = WikiM.openSharedGroupMappingModal = openSharedGroupMappingModal;
     window.syncSubscribedGroup = WikiM.syncSubscribedGroup = syncSubscribedGroup;
+    window.syncAllSubscribedGroups = WikiM.syncAllSubscribedGroups = syncAllSubscribedGroups;
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});
