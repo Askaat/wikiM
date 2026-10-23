@@ -293,6 +293,24 @@
             display: inline-flex;
             align-items: center;
             gap: 5px;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.15s ease;
+        }
+        .wm-rb-chip:hover {
+            filter: brightness(1.2);
+            transform: translateY(-1px);
+        }
+        .wm-rb-chip.is-partial {
+            background: rgba(16, 185, 129, 0.22);
+            border-color: rgba(16, 185, 129, 0.55);
+            color: #a7f3d0;
+        }
+        .wm-rb-chip.is-partial:hover {
+            border-color: rgba(16, 185, 129, 0.85);
+        }
+        .wm-rb-chip.is-partial button {
+            color: #6ee7b7;
         }
         .wm-rb-chip button {
             background: none;
@@ -999,10 +1017,30 @@
                     interactive.innerHTML = '';
                     const terms = parseTerms(cond.value);
                     terms.forEach((t, tIdx) => {
+                        const isPartial = t.startsWith('*');
+                        const cleanText = isPartial ? t.slice(1) : t;
+
                         const chip = document.createElement('span');
-                        chip.className = 'wm-rb-chip';
-                        chip.innerHTML = `<span>${escapeHtml(t)}</span><button type="button" title="Retirer">✕</button>`;
-                        chip.querySelector('button').addEventListener('click', () => {
+                        chip.className = `wm-rb-chip ${isPartial ? 'is-partial' : ''}`;
+                        chip.title = isPartial 
+                            ? 'Mot partiel (Vert) : peut être contenu dans un mot. Cliquer pour passer en mot complet (Bleu)' 
+                            : 'Mot complet (Bleu) : doit être un mot entier délimité par des espaces. Cliquer pour passer en mot partiel (Vert)';
+                        chip.innerHTML = `<span>${escapeHtml(cleanText)}</span><button type="button" title="Retirer">✕</button>`;
+
+                        // Clic sur le tag : toggle entre mot complet (bleu) et mot partiel (vert)
+                        chip.addEventListener('click', (e) => {
+                            if (e.target.closest('button')) return;
+                            const cur = parseTerms(cond.value);
+                            const raw = cur[tIdx];
+                            if (!raw) return;
+                            cur[tIdx] = raw.startsWith('*') ? raw.slice(1) : ('*' + raw);
+                            cond.value = cur.join('; ');
+                            saveLocalState();
+                            rebuildChips();
+                        });
+
+                        chip.querySelector('button').addEventListener('click', (e) => {
+                            e.stopPropagation();
                             const cur = parseTerms(cond.value);
                             cur.splice(tIdx, 1);
                             cond.value = cur.join('; ');
@@ -1050,7 +1088,14 @@
                 };
 
                 rebuildChips();
+                const hint = document.createElement('div');
+                hint.style.cssText = 'font-size:10px;color:#94a3b8;margin-top:3px;display:flex;gap:10px;align-items:center;user-select:none;';
+                hint.innerHTML = `
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:#6366f1;"></span> <b>Bleu</b> = Mot complet</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:#10b981;"></span> <b>Vert</b> = Mot partiel (clic pour basculer)</span>
+                `;
                 chipsBox.appendChild(interactive);
+                chipsBox.appendChild(hint);
                 row.appendChild(chipsBox);
             } else {
                 const inp = document.createElement('input');

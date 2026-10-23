@@ -196,6 +196,24 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
+                cursor: pointer;
+                user-select: none;
+                transition: all 0.15s ease;
+            }
+            .wm-rb-chip:hover {
+                filter: brightness(1.2);
+                transform: translateY(-1px);
+            }
+            .wm-rb-chip.is-partial {
+                background: rgba(16, 185, 129, 0.22);
+                border-color: rgba(16, 185, 129, 0.55);
+                color: #a7f3d0;
+            }
+            .wm-rb-chip.is-partial:hover {
+                border-color: rgba(16, 185, 129, 0.85);
+            }
+            .wm-rb-chip.is-partial .wm-rb-chip-del {
+                color: #6ee7b7;
             }
             .wm-rb-chip-del {
                 background: none;
@@ -936,6 +954,32 @@
         'description': { label: 'Description', type: 'string', getter: (card) => card.summary || '' }
     };
 
+    function escapeRegexTerm(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function matchRuleTerm(text, rawTerm) {
+        if (!text || !rawTerm) return false;
+        const isPartial = rawTerm.startsWith('*');
+        const term = (isPartial ? rawTerm.slice(1) : rawTerm).trim().toLowerCase();
+        if (!term) return false;
+        const lowerText = String(text).toLowerCase();
+
+        if (isPartial) {
+            // Mot partiel (Vert) : peut être contenu n'importe où dans un mot
+            return lowerText.includes(term);
+        } else {
+            // Mot complet (Bleu) : doit être entouré d'espaces, ponctuation ou début/fin de chaîne
+            try {
+                const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegexTerm(term)}(?![\\p{L}\\p{N}_])`, 'u');
+                return pattern.test(lowerText);
+            } catch (e) {
+                const fallback = new RegExp(`(?<![a-zA-Z0-9\\u00C0-\\u017F_])${escapeRegexTerm(term)}(?![a-zA-Z0-9\\u00C0-\\u017F_])`, 'i');
+                return fallback.test(lowerText);
+            }
+        }
+    }
+
     const WM_RULE_OPERATORS = {
         '>':  (a, b) => Number(a) > Number(b),
         '>=': (a, b) => Number(a) >= Number(b),
@@ -944,16 +988,14 @@
         '=':  (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
         '!=': (a, b) => String(a).toLowerCase() !== String(b).toLowerCase(),
         'contains': (a, b) => {
-            const valA = String(a).toLowerCase();
-            const terms = String(b).toLowerCase().split(';').map(t => t.trim()).filter(t => t);
+            const terms = String(b || '').split(';').map(t => t.trim()).filter(Boolean);
             if (terms.length === 0) return false;
-            return terms.some(term => valA.includes(term));
+            return terms.some(term => matchRuleTerm(a, term));
         },
         'not_contains': (a, b) => {
-            const valA = String(a).toLowerCase();
-            const terms = String(b).toLowerCase().split(';').map(t => t.trim()).filter(t => t);
+            const terms = String(b || '').split(';').map(t => t.trim()).filter(Boolean);
             if (terms.length === 0) return true;
-            return terms.every(term => !valA.includes(term));
+            return terms.every(term => !matchRuleTerm(a, term));
         }
     };
 
@@ -974,13 +1016,21 @@
         const rawVal = String(cond.value ?? '').trim();
 
         let valFormatted = '';
-        if ((cond.operator === 'contains' || cond.operator === 'not_contains') && rawVal.includes(';')) {
+        if (cond.operator === 'contains' || cond.operator === 'not_contains') {
             const terms = rawVal.split(';').map(t => t.trim()).filter(Boolean);
             const joinWord = cond.operator === 'not_contains' ? ' ni ' : ' ou ';
-            if (isHtml) {
-                valFormatted = terms.map(t => `<span style="color:#38bdf8;font-weight:700;">"${escapeHtml(t)}"</span>`).join(`<span style="color:#94a3b8;">${joinWord}</span>`);
+            if (terms.length === 0) {
+                valFormatted = isHtml ? '<span style="color:#94a3b8;">?</span>' : '?';
+            } else if (isHtml) {
+                valFormatted = terms.map(t => {
+                    const isPartial = t.startsWith('*');
+                    const clean = isPartial ? t.slice(1) : t;
+                    const color = isPartial ? '#34d399' : '#38bdf8';
+                    const hint = isPartial ? ' (partiel)' : ' (complet)';
+                    return `<span style="color:${color};font-weight:700;" title="${isPartial ? 'Mot partiel (Vert)' : 'Mot complet (Bleu)'}">"${escapeHtml(clean)}"${hint}</span>`;
+                }).join(`<span style="color:#94a3b8;">${joinWord}</span>`);
             } else {
-                valFormatted = terms.map(t => `"${t}"`).join(joinWord);
+                valFormatted = terms.map(t => t.startsWith('*') ? `"${t.slice(1)}" (partiel)` : `"${t}"`).join(joinWord);
             }
         } else {
             const displayVal = rawVal === '' ? '?' : rawVal;
@@ -2860,9 +2910,28 @@
 
                     interactiveArea.innerHTML = '';
                     terms.forEach((term, tIdx) => {
+                        const isPartial = term.startsWith('*');
+                        const cleanText = isPartial ? term.slice(1) : term;
+
                         const chip = document.createElement('span');
-                        chip.className = 'wm-rb-chip';
-                        chip.innerHTML = `<span>${escapeHtml(term)}</span>`;
+                        chip.className = `wm-rb-chip ${isPartial ? 'is-partial' : ''}`;
+                        chip.title = isPartial 
+                            ? 'Mot partiel (Vert) : peut être contenu dans un mot. Cliquer pour passer en mot complet (Bleu)' 
+                            : 'Mot complet (Bleu) : doit être un mot entier délimité par des espaces. Cliquer pour passer en mot partiel (Vert)';
+                        chip.innerHTML = `<span>${escapeHtml(cleanText)}</span>`;
+
+                        // Clic sur l'étiquette : bascule entre Mot complet (Bleu) et Mot partiel (Vert)
+                        chip.addEventListener('click', (e) => {
+                            if (e.target.closest('button')) return;
+                            const currentTerms = parseTerms(cond.value);
+                            const raw = currentTerms[tIdx];
+                            if (!raw) return;
+                            currentTerms[tIdx] = raw.startsWith('*') ? raw.slice(1) : ('*' + raw);
+                            cond.value = currentTerms.join('; ');
+                            syncChipsUI(true);
+                            updateHeaderAndPreview();
+                        });
+
                         const delBtn = document.createElement('button');
                         delBtn.type = 'button';
                         delBtn.className = 'wm-rb-chip-del';
@@ -2951,7 +3020,15 @@
                 });
 
                 syncChipsUI(true);
+                const chipsLegend = document.createElement('div');
+                chipsLegend.style.cssText = 'font-size:10px;color:#94a3b8;margin-top:3px;display:flex;gap:12px;align-items:center;user-select:none;';
+                chipsLegend.innerHTML = `
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:#6366f1;"></span> <b>Bleu</b> = Mot complet</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:#10b981;"></span> <b>Vert</b> = Mot partiel (clic pour basculer)</span>
+                `;
+
                 chipsBox.appendChild(interactiveArea);
+                chipsBox.appendChild(chipsLegend);
                 chipsBox.appendChild(rawWrap);
                 mainLine.appendChild(chipsBox);
             } else {
