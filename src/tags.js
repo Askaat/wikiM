@@ -169,6 +169,59 @@
                 display: flex;
                 flex-direction: column;
                 gap: 6px;
+                transition: all 0.2s ease;
+            }
+            .wm-rb-chips-box.is-linked-target {
+                background: rgba(15, 23, 42, 0.45);
+                border: 1px dashed rgba(99, 102, 241, 0.5);
+                border-radius: 8px;
+                padding: 6px;
+                box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.35);
+            }
+            .wm-rb-linked-notice {
+                font-size: 10px;
+                font-weight: 600;
+                color: #a5b4fc;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 2px 7px;
+                background: rgba(99, 102, 241, 0.15);
+                border-radius: 4px;
+                width: fit-content;
+                user-select: none;
+            }
+            .wm-rb-chain-btn {
+                background: rgba(30, 41, 59, 0.85);
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                color: #94a3b8;
+                border-radius: 12px;
+                padding: 2px 10px;
+                font-size: 10px;
+                font-weight: 600;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                transition: all 0.18s ease;
+                user-select: none;
+            }
+            .wm-rb-chain-btn:hover {
+                border-color: rgba(99, 102, 241, 0.55);
+                color: #e0e7ff;
+                background: rgba(49, 46, 129, 0.4);
+                transform: scale(1.03);
+            }
+            .wm-rb-chain-btn.is-linked {
+                background: rgba(79, 70, 229, 0.25);
+                border-color: #6366f1;
+                color: #c7d2fe;
+                box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+            }
+            .wm-rb-chain-btn.is-linked:hover {
+                background: rgba(239, 68, 68, 0.15);
+                border-color: rgba(239, 68, 68, 0.45);
+                color: #fca5a5;
             }
             .wm-rb-chips-interactive {
                 background: rgba(30, 41, 59, 0.85);
@@ -861,7 +914,8 @@
                     type: 'condition',
                     field: c.field || 'title',
                     operator: c.operator || 'contains',
-                    value: c.value !== undefined ? c.value : ''
+                    value: c.value !== undefined ? c.value : '',
+                    ...(c.linkedToPrev ? { linkedToPrev: true } : {})
                 }))
             };
         } else {
@@ -891,7 +945,8 @@
                 type: 'condition',
                 field: child?.field || 'title',
                 operator: child?.operator || 'contains',
-                value: child?.value !== undefined ? child.value : ''
+                value: child?.value !== undefined ? child.value : '',
+                ...(child?.linkedToPrev ? { linkedToPrev: true } : {})
             };
         });
 
@@ -1027,7 +1082,7 @@
                     const clean = isPartial ? t.slice(1) : t;
                     const color = isPartial ? '#34d399' : '#38bdf8';
                     const hint = isPartial ? ' (partiel)' : ' (complet)';
-                    return `<span style="color:${color};font-weight:700;" title="${isPartial ? 'Mot partiel (Vert)' : 'Mot complet (Bleu)'}">"${escapeHtml(clean)}"${hint}</span>`;
+                    return `<span style="color:${color};font-weight:700;" title="${isPartial ? 'Mot partiel (Vert)' : 'Mot complet (Bleu)'}">"${escapeHtml(clean)}"</span>`;
                 }).join(`<span style="color:#94a3b8;">${joinWord}</span>`);
             } else {
                 valFormatted = terms.map(t => t.startsWith('*') ? `"${t.slice(1)}" (partiel)` : `"${t}"`).join(joinWord);
@@ -2608,6 +2663,74 @@
     // ============================================================
     // GRANDE MODALE D'ÉDITION LOGIQUE AVANCÉE (POP-UP)
     // ============================================================
+    function cleanTermToken(term) {
+        return (term.startsWith('*') ? term.slice(1) : term).trim().toLowerCase();
+    }
+
+    function isChipsConditionNode(cond) {
+        if (!cond || cond.type !== 'condition') return false;
+        const fMeta = WM_RULE_FIELDS[cond.field];
+        return fMeta && fMeta.type === 'string' && (cond.operator === 'contains' || cond.operator === 'not_contains');
+    }
+
+    function syncConditionTermsDelta(prevOldVal, prevNewVal, currVal) {
+        const oldPrev = String(prevOldVal || '').split(';').map(t => t.trim()).filter(Boolean);
+        const newPrev = String(prevNewVal || '').split(';').map(t => t.trim()).filter(Boolean);
+        let currTerms = String(currVal || '').split(';').map(t => t.trim()).filter(Boolean);
+
+        // 1. Termes ajoutés dans le champ supérieur
+        const added = newPrev.filter(t => !oldPrev.some(o => cleanTermToken(o) === cleanTermToken(t)));
+        for (const t of added) {
+            if (!currTerms.some(c => cleanTermToken(c) === cleanTermToken(t))) {
+                currTerms.push(t);
+            }
+        }
+
+        // 2. Termes retirés dans le champ supérieur
+        const removedCleans = new Set(
+            oldPrev
+                .filter(o => !newPrev.some(n => cleanTermToken(n) === cleanTermToken(o)))
+                .map(o => cleanTermToken(o))
+        );
+        currTerms = currTerms.filter(c => !removedCleans.has(cleanTermToken(c)));
+
+        // 3. Termes dont le mode (bleu / vert avec *) a été basculé dans le champ supérieur
+        for (const n of newPrev) {
+            const matchingOld = oldPrev.find(o => cleanTermToken(o) === cleanTermToken(n));
+            if (matchingOld && (matchingOld.startsWith('*') !== n.startsWith('*'))) {
+                for (let i = 0; i < currTerms.length; i++) {
+                    if (cleanTermToken(currTerms[i]) === cleanTermToken(n)) {
+                        currTerms[i] = n;
+                    }
+                }
+            }
+        }
+
+        return currTerms.join('; ');
+    }
+
+    function propagateConditionCascade(parentGroup, srcCond, oldVal, newVal) {
+        srcCond.value = newVal;
+        if (!parentGroup || !Array.isArray(parentGroup.children)) return;
+        const idx = parentGroup.children.indexOf(srcCond);
+        if (idx === -1) return;
+
+        let currentOld = oldVal;
+        let currentNew = newVal;
+        for (let i = idx + 1; i < parentGroup.children.length; i++) {
+            const nextChild = parentGroup.children[i];
+            if (nextChild && nextChild.type === 'condition' && nextChild.linkedToPrev && isChipsConditionNode(nextChild)) {
+                const nextOld = String(nextChild.value || '');
+                const nextNew = syncConditionTermsDelta(currentOld, currentNew, nextOld);
+                nextChild.value = nextNew;
+                currentOld = nextOld;
+                currentNew = nextNew;
+            } else {
+                break;
+            }
+        }
+    }
+
     function openRuleBuilderModal(gIdx, rIdx = null) {
         ensureRuleBuilderStyles();
 
@@ -2797,10 +2920,37 @@
 
             groupNode.children.forEach((child, cIdx) => {
                 if (cIdx > 0) {
+                    const prevChild = groupNode.children[cIdx - 1];
+                    const prevIsChips = isChipsConditionNode(prevChild);
+                    const currIsChips = isChipsConditionNode(child);
+
+                    const dividerRow = document.createElement('div');
+                    dividerRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;margin:3px 0;position:relative;';
+
                     const badge = document.createElement('div');
                     badge.className = `wm-rb-divider-badge ${isOr ? 'wm-rb-divider-or' : 'wm-rb-divider-and'}`;
                     badge.textContent = isOr ? 'OU' : 'ET';
-                    childrenWrap.appendChild(badge);
+                    dividerRow.appendChild(badge);
+
+                    if (prevIsChips && currIsChips) {
+                        const isLinked = Boolean(child.linkedToPrev);
+                        const chainBtn = document.createElement('button');
+                        chainBtn.type = 'button';
+                        chainBtn.className = `wm-rb-chain-btn ${isLinked ? 'is-linked' : ''}`;
+                        chainBtn.title = isLinked
+                            ? 'Champs liés : cliquer pour délier les deux champs'
+                            : 'Lier ces deux champs de texte : les mots ajoutés en haut sont répercutés en bas sans modifier vos différences';
+                        chainBtn.innerHTML = `<span>${isLinked ? '🔗' : '⛓️'}</span><span>${isLinked ? 'Champs liés' : 'Lier les champs'}</span>`;
+                        chainBtn.addEventListener('click', () => {
+                            child.linkedToPrev = !child.linkedToPrev;
+                            renderTree();
+                        });
+                        dividerRow.appendChild(chainBtn);
+                    } else if (child.linkedToPrev) {
+                        child.linkedToPrev = false;
+                    }
+
+                    childrenWrap.appendChild(dividerRow);
                 }
 
                 if (child.type === 'group' || Array.isArray(child.children)) {
@@ -2885,7 +3035,14 @@
                 mainLine.appendChild(valSelect);
             } else if (usesChips) {
                 const chipsBox = document.createElement('div');
-                chipsBox.className = 'wm-rb-chips-box';
+                chipsBox.className = `wm-rb-chips-box ${cond.linkedToPrev ? 'is-linked-target' : ''}`;
+
+                if (cond.linkedToPrev) {
+                    const notice = document.createElement('div');
+                    notice.className = 'wm-rb-linked-notice';
+                    notice.innerHTML = `<span>🔗</span><span>Lié au champ supérieur (les mots ajoutés en haut sont répercutés ici)</span>`;
+                    chipsBox.appendChild(notice);
+                }
 
                 const interactiveArea = document.createElement('div');
                 interactiveArea.className = 'wm-rb-chips-interactive';
@@ -2926,10 +3083,15 @@
                             const currentTerms = parseTerms(cond.value);
                             const raw = currentTerms[tIdx];
                             if (!raw) return;
+                            const oldVal = cond.value;
                             currentTerms[tIdx] = raw.startsWith('*') ? raw.slice(1) : ('*' + raw);
-                            cond.value = currentTerms.join('; ');
+                            const newVal = currentTerms.join('; ');
+                            propagateConditionCascade(parentGroup, cond, oldVal, newVal);
                             syncChipsUI(true);
                             updateHeaderAndPreview();
+                            if (parentGroup && parentGroup.children && parentGroup.children.some(c => c.linkedToPrev)) {
+                                renderTree();
+                            }
                         });
 
                         const delBtn = document.createElement('button');
@@ -2940,10 +3102,15 @@
                         delBtn.addEventListener('click', (e) => {
                             e.stopPropagation();
                             const currentTerms = parseTerms(cond.value);
+                            const oldVal = cond.value;
                             currentTerms.splice(tIdx, 1);
-                            cond.value = currentTerms.join('; ');
+                            const newVal = currentTerms.join('; ');
+                            propagateConditionCascade(parentGroup, cond, oldVal, newVal);
                             syncChipsUI(true);
                             updateHeaderAndPreview();
+                            if (parentGroup && parentGroup.children && parentGroup.children.some(c => c.linkedToPrev)) {
+                                renderTree();
+                            }
                         });
                         chip.appendChild(delBtn);
                         interactiveArea.appendChild(chip);
@@ -2965,12 +3132,18 @@
                                     existing.push(tok);
                                 }
                             });
-                            cond.value = existing.join('; ');
+                            const oldVal = cond.value;
+                            const newVal = existing.join('; ');
+                            propagateConditionCascade(parentGroup, cond, oldVal, newVal);
                             chipInput.value = '';
                             syncChipsUI(true);
                             updateHeaderAndPreview();
-                            const newInput = interactiveArea.querySelector('.wm-rb-chip-input');
-                            if (newInput) newInput.focus();
+                            if (parentGroup && parentGroup.children && parentGroup.children.some(c => c.linkedToPrev)) {
+                                renderTree();
+                            } else {
+                                const newInput = interactiveArea.querySelector('.wm-rb-chip-input');
+                                if (newInput) newInput.focus();
+                            }
                         }
                     };
 
