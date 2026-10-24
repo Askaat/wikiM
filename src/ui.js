@@ -218,6 +218,13 @@
                     <div id="wm-alt-list" style="margin-top:8px; display:flex; gap:4px; flex-wrap:wrap;"></div>
                 </div>
                 <div>
+                    <div class="wm-section-title">Ouverture de Paquets</div>
+                    <div class="wm-pref-row" style="margin-bottom:8px;">
+                        <label for="wm-pref-auto-pack-prices" style="font-size:12px;" title="Récupérer le prix moyen des 5 cartes lors d'une ouverture manuelle">💰 Prix auto à l'ouverture de paquet</label>
+                        <input type="checkbox" id="wm-pref-auto-pack-prices" ${localStorage.getItem('wmAutoPackPricesEnabled') !== 'false' ? 'checked' : ''}>
+                    </div>
+                </div>
+                <div>
                     <div class="wm-section-title">Notifications</div>
                     <div class="wm-pref-row"><label for="wm-pref-browser">Notification navigateur</label><input type="checkbox" id="wm-pref-browser" ${window.getPrefs().browser ? 'checked' : ''}></div>
                     <div class="wm-pref-row"><label for="wm-pref-toast">Toast in-page</label><input type="checkbox" id="wm-pref-toast" ${window.getPrefs().toast ? 'checked' : ''}></div>
@@ -350,6 +357,16 @@
         ['wm-pref-browser', 'wm-pref-toast', 'wm-pref-sound', 'wm-pref-trigger', 'wm-pref-refresh'].forEach(id => {
             document.getElementById(id).addEventListener('change', savePrefsFromUI);
         });
+
+        const autoPricesToggle = document.getElementById('wm-pref-auto-pack-prices');
+        if (autoPricesToggle) {
+            autoPricesToggle.addEventListener('change', () => {
+                localStorage.setItem('wmAutoPackPricesEnabled', autoPricesToggle.checked ? 'true' : 'false');
+                window.logToPanel(autoPricesToggle.checked ? '💰 Prix auto à l\'ouverture activés' : '💰 Prix auto à l\'ouverture désactivés');
+                const boToggle = document.getElementById('wm-bo-toggle-prices');
+                if (boToggle) boToggle.checked = autoPricesToggle.checked;
+            });
+        }
 
         const multiToggle = document.getElementById('wm-pref-multi-enabled');
         if (multiToggle) {

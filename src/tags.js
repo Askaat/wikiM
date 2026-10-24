@@ -639,6 +639,7 @@
     // MOTEUR D'AUTO-TAGGING SUPABASE (Intelligent & Anti-CORS)
     // ============================================================
     async function processAutoTags(pulledCards, ownedCopies = null) {
+        if (window._wmBulkOpeningActive || (window.WikiM && window.WikiM.isBulkOpening)) return;
         const isAutoTagEnabled = localStorage.getItem('wmAutoTagEnabled') === 'true';
         if (!isAutoTagEnabled || !pulledCards || pulledCards.length === 0) return;
 

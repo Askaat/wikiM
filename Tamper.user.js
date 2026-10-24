@@ -43,6 +43,7 @@
         'src/collection.js',
         'src/trades.js',
         'src/tags.js',
+        'src/bulk_opener.js',
         'src/shortcuts.js',
         'src/ui.js',
         'src/main.js'

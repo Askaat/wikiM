@@ -355,6 +355,7 @@
             if (!initAuction || initAuction.status !== 'active') {
                 rt.confirmedEnded = true;
                 rt.lastStatus = 'ended';
+                setSniperConfigFor(auctionId, { enabled: false, status: initAuction?.status || 'ended' });
                 if (isCurrentPage) updateSniperStatusUI();
                 return;
             }
@@ -364,6 +365,15 @@
 
         const endMs = new Date(cfg.endAt).getTime();
         const secondsLeft = Math.floor((endMs - now) / 1000);
+
+        // Si l'enchère est terminée depuis plus de 60s selon la date enregistrée
+        if (cfg.endAt && !isNaN(endMs) && secondsLeft < -60) {
+            rt.confirmedEnded = true;
+            rt.lastStatus = 'ended';
+            setSniperConfigFor(auctionId, { enabled: false, status: 'ended' });
+            if (isCurrentPage) updateSniperStatusUI();
+            return;
+        }
 
         // 2. AVANT LE TRIGGER → aucune requête, on attend
         if (secondsLeft > cfg.trigger) {
@@ -387,6 +397,7 @@
         if (auction.status !== 'active') {
             rt.confirmedEnded = true;
             rt.lastStatus = 'ended';
+            setSniperConfigFor(auctionId, { enabled: false, status: auction.status });
             if (isCurrentPage) updateSniperStatusUI();
             return;
         }
@@ -644,6 +655,7 @@
                 state.confirmedEnded = true;
                 rem.confirmedEnded = true;
                 saveReminders(reminders);
+                setSniperConfigFor(auctionId, { enabled: false, status: freshAuction.status });
 
                 const timerEl = document.querySelector(`.wm-tracked-timer[data-id="${auctionId}"]`);
                 if (timerEl) {
@@ -988,6 +1000,49 @@
     }, 5000);
 
     // --- Cross-module exports ---
+        /**
+     * Nettoie définitivement les enchères terminées (settled_sold, cancelled, etc.)
+     * ou expirées depuis plus de 2 minutes pour éviter de continuer à les interroger en arrière-plan.
+     */
+    function pruneExpiredSniperAuctions() {
+        try {
+            const all = getAllSniperConfigs();
+            const now = Date.now();
+            let changed = false;
+            for (const id of Object.keys(all)) {
+                const item = all[id];
+                if (!item) continue;
+                const isStatusEnded = item.status && item.status !== 'active';
+                const endMs = item.endAt ? new Date(item.endAt).getTime() : NaN;
+                const isTimeExpired = !isNaN(endMs) && (now - endMs) > 120000;
+                if (isStatusEnded || isTimeExpired) {
+                    if (item.enabled) {
+                        item.enabled = false;
+                        item.status = item.status || 'ended';
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) saveAllSniperConfigs(all);
+
+            const rems = getReminders();
+            let remChanged = false;
+            for (const id of Object.keys(rems)) {
+                const r = rems[id];
+                if (!r) continue;
+                const endMs = r.endAt ? new Date(r.endAt).getTime() : NaN;
+                if (!isNaN(endMs) && (now - endMs) > 120000) {
+                    delete rems[id];
+                    remChanged = true;
+                }
+            }
+            if (remChanged) saveReminders(rems);
+        } catch (e) {
+            console.warn('[WM-Sniper] Erreur nettoyage enchères expirées:', e);
+        }
+    }
+    pruneExpiredSniperAuctions();
+
     window.getAllSniperConfigs = WikiM.getAllSniperConfigs = getAllSniperConfigs;
     window.saveAllSniperConfigs = WikiM.saveAllSniperConfigs = saveAllSniperConfigs;
     window.getSniperConfigFor = WikiM.getSniperConfigFor = getSniperConfigFor;

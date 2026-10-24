@@ -102,7 +102,7 @@
     // ============================================================
     const priceQueue = [];
     let isQueueProcessing = false;
-    const QUEUE_DELAY_MS = 350; // 350ms entre requêtes
+    const QUEUE_DELAY_MS = 2000; // 2000ms (2s) sécurisé entre requêtes pour éviter 429
     let rateLimitBackoffUntil = 0;
 
     function enqueuePriceFetch(uuid, cardTitle) {

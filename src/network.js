@@ -189,15 +189,21 @@
                         });
                     }
 
-                    // 1. Lancement du scan des prix
-                    data.cards.forEach((card, i) => {
-                        const uuid = card.id;
-                        const title = card.wikipedia_title || card.title;
-                        if (uuid && title) setTimeout(() => window.fetchPricesBackground(uuid, title), i * 120);
-                    });
+                    const isBulkActive = !!(window._wmBulkOpeningActive || (window.WikiM && window.WikiM.isBulkOpening));
+                    const isAutoPackPricesEnabled = localStorage.getItem('wmAutoPackPricesEnabled') !== 'false';
 
-                    // 2. Lancement de l'Auto-Tag intelligent (avec owned_copies direct si disponible)
-                    if (typeof processAutoTags === 'function' || typeof window.processAutoTags === 'function') {
+                    // 1. Lancement du scan des prix (désactivé si Bulk Opener en cours, ou si option désactivée)
+                    if (!isBulkActive && isAutoPackPricesEnabled) {
+                        data.cards.forEach((card, i) => {
+                            const uuid = card.id;
+                            const title = card.wikipedia_title || card.title;
+                            // Délai sécurisé de 1.1s par carte au lieu de 120ms pour éviter le 429 même en manuel
+                            if (uuid && title) setTimeout(() => window.fetchPricesBackground(uuid, title), i * 2200);
+                        });
+                    }
+
+                    // 2. Lancement de l'Auto-Tag intelligent (désactivé si Bulk Opener en cours)
+                    if (!isBulkActive && (typeof processAutoTags === 'function' || typeof window.processAutoTags === 'function')) {
                         const autoTagFn = window.processAutoTags || processAutoTags;
                         setTimeout(() => autoTagFn(data.cards, data.owned_copies), 1200);
                     }
