@@ -248,8 +248,8 @@
         migrateLocalStorageToIndexedDB();
     }
 
-    // Exports
-    window.wmIDB = WikiM.IDB = {
+    // Exports robustes (contexte sandbox + contexte page unsafeWindow)
+    const dbObj = {
         open: openWikiMDatabase,
         get: idbGet,
         put: idbPut,
@@ -259,5 +259,8 @@
         stores: STORES,
         migrate: migrateLocalStorageToIndexedDB
     };
+    window.wmIDB = dbObj;
+    WikiM.IDB = dbObj;
+    if (typeof unsafeWindow !== 'undefined') unsafeWindow.wmIDB = dbObj;
 
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

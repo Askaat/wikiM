@@ -37,6 +37,64 @@
      * avec 2 secondes de délai de sécurité entre chaque page,
      * et supporte Pause / Resume / Arrêt.
      */
+    /**
+     * Détecte ou résout automatiquement le pseudo du compte courant
+     */
+    async function detectMyUsername() {
+        // 1. Déjà stocké par l'utilisateur
+        let saved = localStorage.getItem('wmMyUsername');
+        if (saved && saved.trim()) return saved.trim();
+
+        // 2. Variable globale window ou unsafeWindow
+        const targetWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        const glob = targetWin.wmUsername || window.wmUsername || targetWin.W?.wmUsername || window.W?.wmUsername;
+        if (glob && typeof glob === 'string' && glob.trim()) {
+            localStorage.setItem('wmMyUsername', glob.trim());
+            return glob.trim();
+        }
+
+        // 3. Inspection du DOM pour les liens de profil
+        try {
+            const profileLinks = document.querySelectorAll('a[href*="/profile/"]');
+            for (const a of profileLinks) {
+                const href = a.getAttribute('href') || '';
+                const m = href.match(/\/profile\/([^/?#]+)/);
+                if (m && m[1]) {
+                    const candidate = decodeURIComponent(m[1]).trim();
+                    if (candidate && !['my-collection', 'friends', 'settings', 'null', 'undefined', 'undefined'].includes(candidate.toLowerCase())) {
+                        localStorage.setItem('wmMyUsername', candidate);
+                        console.log(`[WM-Sync] 👤 Pseudo détecté via le DOM : ${candidate}`);
+                        return candidate;
+                    }
+                }
+            }
+        } catch(e) {}
+
+        // 4. Fallback sur /api/friends
+        try {
+            const res = await fetch('/api/friends', { credentials: 'include' });
+            if (res.ok) {
+                const data = await res.json();
+                const friendships = data.friendships || [];
+                if (friendships.length > 0) {
+                    const counts = {};
+                    friendships.forEach(f => {
+                        if (f.requester?.username) counts[f.requester.username] = (counts[f.requester.username] || 0) + 1;
+                        if (f.addressee?.username) counts[f.addressee.username] = (counts[f.addressee.username] || 0) + 1;
+                    });
+                    const top = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, null);
+                    if (top) {
+                        localStorage.setItem('wmMyUsername', top);
+                        console.log(`[WM-Sync] 👤 Pseudo détecté via /api/friends : ${top}`);
+                        return top;
+                    }
+                }
+            }
+        } catch(e) {}
+
+        return null;
+    }
+
     async function scanAndSyncCollection(onProgress = null) {
         if (syncScanController.isRunning && !syncScanController.isPaused) {
             return;
@@ -55,10 +113,10 @@
         syncScanController.currentPage = 0;
         syncScanController.totalCards = 0;
 
-        const myName = (window.W && window.W.wmUsername) || localStorage.getItem('wmMyUsername');
+        let myName = await detectMyUsername();
         if (!myName) {
-            console.error('[WM-Sync] ❌ Impossible de démarrer le scan : nom d\'utilisateur inconnu. Connectez-vous d\'abord.');
-            if (onProgress) onProgress({ status: 'error', error: 'Nom d\'utilisateur inconnu', count: 0 });
+            console.error('[WM-Sync] ❌ Impossible de démarrer le scan : nom d\'utilisateur inconnu.');
+            if (onProgress) onProgress({ status: 'error', error: 'Nom d\'utilisateur introuvable. Veuillez renseigner votre pseudo dans l\'onglet Hub.', count: 0 });
             syncScanController.isRunning = false;
             return { success: false, error: 'username_unknown' };
         }
@@ -339,8 +397,9 @@
         };
     }
 
-    // Exports
-    window.wmSync = WikiM.Sync = {
+    // Exports robustes (contexte sandbox + contexte page unsafeWindow)
+    const syncObj = {
+        detectMyUsername,
         scanAndSyncCollection,
         pauseCollectionSync,
         resumeCollectionSync,
@@ -349,5 +408,8 @@
         pullAllCollections: pullAllCollectionsFromHub,
         calculateSynergies: calculateMultiAccountSynergies
     };
+    window.wmSync = syncObj;
+    WikiM.Sync = syncObj;
+    if (typeof unsafeWindow !== 'undefined') unsafeWindow.wmSync = syncObj;
 
 })(typeof unsafeWindow !== 'undefined' ? unsafeWindow : window, window.WikiM = window.WikiM || {});

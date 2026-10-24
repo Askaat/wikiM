@@ -243,9 +243,16 @@
 
             <div class="wm-tab-content hidden" data-tab="hub">
                 <div>
-                    <div class="wm-section-title">Synchronisation Cloud & Hub Multi-Comptes</div>
+                    <div class="wm-section-title">☁️ Synchronisation Cloud & Hub Multi-Comptes</div>
                     <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">
-                        Scannez et synchronisez votre collection vers Supabase (délai sécurisé de 2s par page). Partagez instantanément entre comptes et repérez les doublons pour le succès <b>5 exemplaires</b>.
+                        Partagez votre collection vers Supabase (délai sécurisé de 2s par page). Mutualisez vos cartes entre comptes pour compléter le succès <b>5 exemplaires</b>.
+                    </div>
+
+                    <!-- Configuration du compte courant -->
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px; background:rgba(15,23,42,0.6); padding:8px; border-radius:6px; border:1px solid rgba(148,163,184,0.15);">
+                        <span style="font-size:11px; color:#94a3b8; white-space:nowrap;">👤 Compte :</span>
+                        <input id="wm-hub-username-input" type="text" placeholder="Détection auto en cours..." style="background:#0f172a; border:1px solid #334155; color:#38bdf8; font-weight:bold; font-size:11px; border-radius:4px; padding:4px 8px; flex:1;" value="${localStorage.getItem('wmMyUsername') || ''}">
+                        <button id="wm-hub-username-save-btn" class="wm-panel-btn ghost" style="padding:4px 8px; font-size:10px;" title="Enregistrer ce pseudo">💾 Sauver</button>
                     </div>
                     
                     <div style="display:flex; gap:6px; margin-bottom:8px;">
@@ -255,7 +262,7 @@
                         <button id="wm-hub-sync-pull-btn" class="wm-panel-btn ghost" style="flex:1;">📥 Tout actualiser</button>
                     </div>
                     
-                    <div id="wm-hub-sync-status" style="font-size:11px; font-family:monospace; color:#38bdf8; min-height:16px; margin-bottom:12px;"></div>
+                    <div id="wm-hub-sync-status" style="font-size:11px; font-family:monospace; color:#38bdf8; min-height:16px; margin-bottom:12px;">Prêt.</div>
                 </div>
 
                 <div>
@@ -384,19 +391,52 @@
             window.logToPanel('⚙️ Préférences sauvegardées');
         };
         // --- LOGIQUE DU HUB SUPABASE & SUCCÈS 5X ---
+        function getSyncModule() {
+            return (typeof unsafeWindow !== 'undefined' ? unsafeWindow.wmSync : null)
+                || window.wmSync
+                || (W && W.wmSync)
+                || WikiM.Sync;
+        }
+
         const hubStartBtn = document.getElementById('wm-hub-sync-start-btn');
         const hubPauseBtn = document.getElementById('wm-hub-sync-pause-btn');
         const hubStopBtn = document.getElementById('wm-hub-sync-stop-btn');
         const hubPullBtn = document.getElementById('wm-hub-sync-pull-btn');
         const hubStatus = document.getElementById('wm-hub-sync-status');
         const hubList = document.getElementById('wm-hub-synergies-list');
+        const hubUserInput = document.getElementById('wm-hub-username-input');
+        const hubUserSaveBtn = document.getElementById('wm-hub-username-save-btn');
+
+        // Détection automatique du pseudo à l'ouverture
+        (async () => {
+            const sync = getSyncModule();
+            if (sync && typeof sync.detectMyUsername === 'function') {
+                const detected = await sync.detectMyUsername();
+                if (detected && hubUserInput && !hubUserInput.value) {
+                    hubUserInput.value = detected;
+                }
+            }
+        })();
+
+        if (hubUserSaveBtn && hubUserInput) {
+            hubUserSaveBtn.addEventListener('click', () => {
+                const val = (hubUserInput.value || '').trim();
+                if (val) {
+                    localStorage.setItem('wmMyUsername', val);
+                    const targetWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                    targetWin.wmUsername = val;
+                    if (hubStatus) hubStatus.textContent = `✅ Pseudo enregistré : ${val}`;
+                }
+            });
+        }
 
         async function refreshHubSynergiesUI() {
             if (!hubList) return;
             hubList.innerHTML = '<div class="wm-tracked-empty">⏳ Calcul des synergies multi-comptes en cours...</div>';
             try {
-                const res = typeof window.wmSync?.calculateSynergies === 'function'
-                    ? await window.wmSync.calculateSynergies()
+                const sync = getSyncModule();
+                const res = typeof sync?.calculateSynergies === 'function'
+                    ? await sync.calculateSynergies()
                     : { achievable5x: [], near5x: [], totalUniqueCardsTracked: 0 };
 
                 if (!res.achievable5x.length && !res.near5x.length) {
@@ -445,8 +485,31 @@
 
         if (hubStartBtn) {
             hubStartBtn.addEventListener('click', async () => {
-                const sync = window.wmSync;
-                if (!sync) return;
+                console.log('[WM-Hub] 🖱️ Clic sur "Scanner & Envoyer"...');
+                const sync = getSyncModule();
+                if (!sync) {
+                    console.error('[WM-Hub] ❌ Module wmSync introuvable !');
+                    if (hubStatus) hubStatus.textContent = '❌ Module Sync non initialisé. Rechargez la page.';
+                    return;
+                }
+
+                // Vérification ou saisie du pseudo
+                let currentUsername = (hubUserInput?.value || '').trim() || localStorage.getItem('wmMyUsername');
+                if (!currentUsername && typeof sync.detectMyUsername === 'function') {
+                    currentUsername = await sync.detectMyUsername();
+                }
+
+                if (!currentUsername) {
+                    const promptVal = prompt('Veuillez renseigner votre pseudo Wiki-Masters pour ce compte :');
+                    if (promptVal && promptVal.trim()) {
+                        currentUsername = promptVal.trim();
+                        localStorage.setItem('wmMyUsername', currentUsername);
+                        if (hubUserInput) hubUserInput.value = currentUsername;
+                    } else {
+                        if (hubStatus) hubStatus.textContent = '❌ Scan annulé : aucun pseudo spécifié.';
+                        return;
+                    }
+                }
 
                 const state = sync.getSyncState ? sync.getSyncState() : {};
                 if (state.isPaused) {
@@ -461,8 +524,9 @@
                 hubPauseBtn.style.display = 'inline-flex';
                 hubPauseBtn.textContent = '⏸️ Pause';
                 hubStopBtn.style.display = 'inline-flex';
+                if (hubStatus) hubStatus.textContent = `🚀 Initialisation du scan pour ${currentUsername}...`;
 
-                await sync.scanAndSyncCollection((prog) => {
+                const res = await sync.scanAndSyncCollection((prog) => {
                     if (!hubStatus) return;
                     if (prog.status === 'running') {
                         hubStatus.textContent = `⏳ Page ${prog.page} en cours... (${prog.count} cartes envoyées)`;
@@ -483,13 +547,16 @@
                 hubStartBtn.textContent = '🚀 Re-scanner & Envoyer';
                 hubPauseBtn.style.display = 'none';
                 hubStopBtn.style.display = 'none';
-                await refreshHubSynergiesUI();
+
+                if (res && res.success) {
+                    await refreshHubSynergiesUI();
+                }
             });
         }
 
         if (hubPauseBtn) {
             hubPauseBtn.addEventListener('click', () => {
-                const sync = window.wmSync;
+                const sync = getSyncModule();
                 if (!sync) return;
                 const state = sync.getSyncState();
                 if (state.isPaused) {
@@ -506,8 +573,9 @@
 
         if (hubStopBtn) {
             hubStopBtn.addEventListener('click', () => {
-                if (window.wmSync?.stopCollectionSync) {
-                    window.wmSync.stopCollectionSync();
+                const sync = getSyncModule();
+                if (sync?.stopCollectionSync) {
+                    sync.stopCollectionSync();
                     if (hubStatus) hubStatus.textContent = '⏳ Arrêt demandé...';
                 }
             });
@@ -515,10 +583,12 @@
 
         if (hubPullBtn) {
             hubPullBtn.addEventListener('click', async () => {
+                const sync = getSyncModule();
+                if (!sync) return;
                 hubPullBtn.disabled = true;
                 if (hubStatus) hubStatus.textContent = '⏳ Récupération de tous les comptes...';
-                if (typeof window.wmSync?.pullAllCollections === 'function') {
-                    await window.wmSync.pullAllCollections();
+                if (typeof sync.pullAllCollections === 'function') {
+                    await sync.pullAllCollections();
                 }
                 hubPullBtn.disabled = false;
                 if (hubStatus) hubStatus.textContent = '✅ Collections multi-comptes à jour !';
