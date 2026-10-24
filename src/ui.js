@@ -483,6 +483,76 @@
             }
         }
 
+        // Gestion dynamique de l'état du scan (survit aux changements de page)
+        function updateHubButtonsState() {
+            const sync = getSyncModule();
+            const state = sync?.getSyncState ? sync.getSyncState() : {};
+            const session = sync?.getStoredSession ? sync.getStoredSession() : null;
+            const isRunning = state.isRunning || (session?.active && !session?.isPaused && (Date.now() - (session?.updatedAt || 0) < 45000));
+            const isPaused = state.isPaused || session?.isPaused;
+            const curPage = (state.currentPage !== undefined && state.currentPage > 0 ? state.currentPage : session?.page) || 0;
+            const curCount = (state.totalCards !== undefined && state.totalCards > 0 ? state.totalCards : session?.totalCards) || 0;
+
+            if (isRunning || isPaused) {
+                if (hubStartBtn) hubStartBtn.style.display = 'none';
+                if (hubPauseBtn) {
+                    hubPauseBtn.style.display = 'inline-flex';
+                    hubPauseBtn.textContent = isPaused ? '▶️ Reprendre' : '⏸️ Pause';
+                }
+                if (hubStopBtn) hubStopBtn.style.display = 'inline-flex';
+                if (hubStatus) {
+                    hubStatus.textContent = isPaused
+                        ? `⏸️ Scan en pause à la page ${curPage + 1} (${curCount} cartes)`
+                        : `⏳ Scan en arrière-plan : page ${curPage + 1} en cours... (${curCount} cartes envoyées)`;
+                }
+            } else {
+                if (hubStartBtn) {
+                    hubStartBtn.style.display = 'inline-flex';
+                    hubStartBtn.textContent = curCount > 0 ? '🚀 Re-scanner & Envoyer' : '🚀 Scanner & Envoyer';
+                }
+                if (hubPauseBtn) hubPauseBtn.style.display = 'none';
+                if (hubStopBtn) hubStopBtn.style.display = 'none';
+            }
+        }
+
+        // Abonnement aux notifications du scan en arrière-plan
+        const syncMod = getSyncModule();
+        if (syncMod && typeof syncMod.addProgressListener === 'function') {
+            syncMod.addProgressListener((prog) => {
+                if (!hubStatus) return;
+                if (prog.status === 'running') {
+                    if (hubStartBtn) hubStartBtn.style.display = 'none';
+                    if (hubPauseBtn) { hubPauseBtn.style.display = 'inline-flex'; hubPauseBtn.textContent = '⏸️ Pause'; }
+                    if (hubStopBtn) hubStopBtn.style.display = 'inline-flex';
+                    hubStatus.textContent = `⏳ Page ${prog.page} en cours... (${prog.count} cartes envoyées)`;
+                } else if (prog.status === 'paused') {
+                    if (hubPauseBtn) hubPauseBtn.textContent = '▶️ Reprendre';
+                    hubStatus.textContent = `⏸️ En pause à la page ${prog.page} (${prog.count} cartes)`;
+                } else if (prog.status === 'rate_limited') {
+                    hubStatus.textContent = `⏳ Rate limit 429 détecté, attente 5s...`;
+                } else if (prog.status === 'done') {
+                    if (hubStartBtn) { hubStartBtn.style.display = 'inline-flex'; hubStartBtn.textContent = '🚀 Re-scanner & Envoyer'; }
+                    if (hubPauseBtn) hubPauseBtn.style.display = 'none';
+                    if (hubStopBtn) hubStopBtn.style.display = 'none';
+                    hubStatus.textContent = `✅ Scan & Synchronisation terminés (${prog.count} cartes) !`;
+                    refreshHubSynergiesUI();
+                } else if (prog.status === 'stopped') {
+                    if (hubStartBtn) { hubStartBtn.style.display = 'inline-flex'; hubStartBtn.textContent = '🚀 Re-scanner & Envoyer'; }
+                    if (hubPauseBtn) hubPauseBtn.style.display = 'none';
+                    if (hubStopBtn) hubStopBtn.style.display = 'none';
+                    hubStatus.textContent = `⏹️ Scan interrompu (${prog.count} cartes synchronisées).`;
+                } else if (prog.status === 'error') {
+                    if (hubStartBtn) { hubStartBtn.style.display = 'inline-flex'; hubStartBtn.textContent = '🚀 Re-scanner & Envoyer'; }
+                    if (hubPauseBtn) hubPauseBtn.style.display = 'none';
+                    if (hubStopBtn) hubStopBtn.style.display = 'none';
+                    hubStatus.textContent = `❌ Erreur : ${prog.error}`;
+                }
+            });
+        }
+
+        // Initialisation de l'état des boutons au chargement de l'UI
+        updateHubButtonsState();
+
         if (hubStartBtn) {
             hubStartBtn.addEventListener('click', async () => {
                 console.log('[WM-Hub] 🖱️ Clic sur "Scanner & Envoyer"...');
@@ -514,9 +584,7 @@
                 const state = sync.getSyncState ? sync.getSyncState() : {};
                 if (state.isPaused) {
                     sync.resumeCollectionSync();
-                    hubStartBtn.style.display = 'none';
-                    hubPauseBtn.style.display = 'inline-flex';
-                    hubPauseBtn.textContent = '⏸️ Pause';
+                    updateHubButtonsState();
                     return;
                 }
 
@@ -526,28 +594,9 @@
                 hubStopBtn.style.display = 'inline-flex';
                 if (hubStatus) hubStatus.textContent = `🚀 Initialisation du scan pour ${currentUsername}...`;
 
-                const res = await sync.scanAndSyncCollection((prog) => {
-                    if (!hubStatus) return;
-                    if (prog.status === 'running') {
-                        hubStatus.textContent = `⏳ Page ${prog.page} en cours... (${prog.count} cartes envoyées)`;
-                    } else if (prog.status === 'paused') {
-                        hubStatus.textContent = `⏸️ En pause à la page ${prog.page} (${prog.count} cartes)`;
-                    } else if (prog.status === 'rate_limited') {
-                        hubStatus.textContent = `⏳ Rate limit 429 détecté, attente 5s...`;
-                    } else if (prog.status === 'done') {
-                        hubStatus.textContent = `✅ Scan & Synchronisation terminés (${prog.count} cartes) !`;
-                    } else if (prog.status === 'stopped') {
-                        hubStatus.textContent = `⏹️ Scan interrompu (${prog.count} cartes synchronisées).`;
-                    } else if (prog.status === 'error') {
-                        hubStatus.textContent = `❌ Erreur : ${prog.error}`;
-                    }
-                });
+                const res = await sync.scanAndSyncCollection();
 
-                hubStartBtn.style.display = 'inline-flex';
-                hubStartBtn.textContent = '🚀 Re-scanner & Envoyer';
-                hubPauseBtn.style.display = 'none';
-                hubStopBtn.style.display = 'none';
-
+                updateHubButtonsState();
                 if (res && res.success) {
                     await refreshHubSynergiesUI();
                 }
@@ -558,8 +607,11 @@
             hubPauseBtn.addEventListener('click', () => {
                 const sync = getSyncModule();
                 if (!sync) return;
-                const state = sync.getSyncState();
-                if (state.isPaused) {
+                const state = sync.getSyncState ? sync.getSyncState() : {};
+                const session = sync.getStoredSession ? sync.getStoredSession() : null;
+                const isPaused = state.isPaused || session?.isPaused;
+
+                if (isPaused) {
                     sync.resumeCollectionSync();
                     hubPauseBtn.textContent = '⏸️ Pause';
                     if (hubStatus) hubStatus.textContent = '▶️ Reprise du scan...';
@@ -577,6 +629,9 @@
                 if (sync?.stopCollectionSync) {
                     sync.stopCollectionSync();
                     if (hubStatus) hubStatus.textContent = '⏳ Arrêt demandé...';
+                    if (hubStartBtn) { hubStartBtn.style.display = 'inline-flex'; hubStartBtn.textContent = '🚀 Re-scanner & Envoyer'; }
+                    if (hubPauseBtn) hubPauseBtn.style.display = 'none';
+                    if (hubStopBtn) hubStopBtn.style.display = 'none';
                 }
             });
         }

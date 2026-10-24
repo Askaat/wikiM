@@ -19,7 +19,49 @@
         };
     }
 
-    // Contrôleur pour le scan page par page avec pause / resume / arrêt
+    // Clés de persistance inter-pages pour le scan en arrière-plan
+    const SCAN_SESSION_KEY = 'wm_sync_scan_session';
+    const TAB_INSTANCE_ID = Math.random().toString(36).slice(2, 9);
+    const progressListeners = new Set();
+
+    function addProgressListener(cb) {
+        if (typeof cb === 'function') {
+            progressListeners.add(cb);
+            return () => progressListeners.delete(cb);
+        }
+        return () => {};
+    }
+
+    function broadcastProgress(prog) {
+        for (const cb of progressListeners) {
+            try { cb(prog); } catch(e) {}
+        }
+    }
+
+    function getStoredSession() {
+        try {
+            const raw = localStorage.getItem(SCAN_SESSION_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch(e) {
+            return null;
+        }
+    }
+
+    function saveScanSession(data) {
+        try {
+            if (!data) {
+                localStorage.removeItem(SCAN_SESSION_KEY);
+            } else {
+                localStorage.setItem(SCAN_SESSION_KEY, JSON.stringify({
+                    ...data,
+                    tabId: TAB_INSTANCE_ID,
+                    updatedAt: Date.now()
+                }));
+            }
+        } catch(e) {}
+    }
+
+    // Contrôleur en mémoire pour le scan page par page
     let syncScanController = {
         isRunning: false,
         isPaused: false,
@@ -96,34 +138,60 @@
     }
 
     async function scanAndSyncCollection(onProgress = null) {
+        if (onProgress) addProgressListener(onProgress);
+
         if (syncScanController.isRunning && !syncScanController.isPaused) {
-            return;
+            return { success: true, running: true };
         }
 
         // Si on était en pause et qu'on reprend
         if (syncScanController.isRunning && syncScanController.isPaused) {
             syncScanController.isPaused = false;
-            if (onProgress) onProgress({ status: 'running', page: syncScanController.currentPage, count: syncScanController.totalCards });
-            return;
+            const sess = getStoredSession();
+            if (sess) saveScanSession({ ...sess, isPaused: false });
+            broadcastProgress({ status: 'running', page: syncScanController.currentPage, count: syncScanController.totalCards });
+            return { success: true, resumed: true };
+        }
+
+        // Vérification d'une session existante pour reprise automatique
+        const existingSession = getStoredSession();
+        let startPage = 0;
+        let initialCards = 0;
+
+        if (existingSession && existingSession.active && !existingSession.stopped && (Date.now() - (existingSession.updatedAt || 0) < 60000)) {
+            startPage = Number(existingSession.page || 0);
+            initialCards = Number(existingSession.totalCards || 0);
+            console.log(`[WM-Sync] 🔄 Reprise transparente du scan en arrière-plan à la page ${startPage + 1} (${initialCards} cartes déjà synchronisées)...`);
         }
 
         syncScanController.isRunning = true;
         syncScanController.isPaused = false;
         syncScanController.stopRequested = false;
-        syncScanController.currentPage = 0;
-        syncScanController.totalCards = 0;
+        syncScanController.currentPage = startPage;
+        syncScanController.totalCards = initialCards;
 
-        let myName = await detectMyUsername();
+        let myName = existingSession?.username || await detectMyUsername();
         if (!myName) {
             console.error('[WM-Sync] ❌ Impossible de démarrer le scan : nom d\'utilisateur inconnu.');
-            if (onProgress) onProgress({ status: 'error', error: 'Nom d\'utilisateur introuvable. Veuillez renseigner votre pseudo dans l\'onglet Hub.', count: 0 });
+            broadcastProgress({ status: 'error', error: 'Nom d\'utilisateur introuvable. Veuillez renseigner votre pseudo dans l\'onglet Hub.', count: 0 });
             syncScanController.isRunning = false;
+            saveScanSession(null);
             return { success: false, error: 'username_unknown' };
         }
-        console.log(`[WM-Sync] 🚀 Démarrage du scan de collection pour ${myName}...`);
+
+        // Persistance immédiate de la session
+        saveScanSession({
+            active: true,
+            page: startPage,
+            totalCards: initialCards,
+            username: myName,
+            isPaused: false
+        });
+
+        console.log(`[WM-Sync] 🚀 Démarrage du scan de collection pour ${myName} (page départ: ${startPage + 1})...`);
 
         try {
-            // 1. Enregistre le compte sur Supabase
+            // Enregistrement du compte sur Supabase
             await fetch(`${SUPABASE_HUB_URL}/accounts`, {
                 method: 'POST',
                 headers: {
@@ -138,24 +206,28 @@
 
             const PAGE_SIZE = 50;
             const MAX_PAGES = 500;
-            let page = 0;
+            let page = startPage;
             const allIngestedCards = [];
 
             while (page < MAX_PAGES) {
                 if (syncScanController.stopRequested) {
                     console.log('[WM-Sync] ⏹️ Scan arrêté par l\'utilisateur.');
+                    saveScanSession(null);
                     break;
                 }
 
-                // Gestion de la mise en pause
+                // Gestion de la pause
                 while (syncScanController.isPaused && !syncScanController.stopRequested) {
-                    if (onProgress) onProgress({ status: 'paused', page, count: syncScanController.totalCards });
+                    broadcastProgress({ status: 'paused', page, count: syncScanController.totalCards });
                     await sleep(300);
                 }
-                if (syncScanController.stopRequested) break;
+                if (syncScanController.stopRequested) {
+                    saveScanSession(null);
+                    break;
+                }
 
                 syncScanController.currentPage = page;
-                if (onProgress) onProgress({ status: 'running', page, count: syncScanController.totalCards, detail: `Récupération page ${page + 1}...` });
+                broadcastProgress({ status: 'running', page: page + 1, count: syncScanController.totalCards, detail: `Récupération page ${page + 1}...` });
 
                 // Récupération de la page depuis Wiki-Masters
                 let data = null;
@@ -167,7 +239,7 @@
 
                     if (resp.status === 429) {
                         console.warn('[WM-Sync] ⏳ Rate-limit 429 détecté, pause forcée de 5s...');
-                        if (onProgress) onProgress({ status: 'rate_limited', page, count: syncScanController.totalCards });
+                        broadcastProgress({ status: 'rate_limited', page: page + 1, count: syncScanController.totalCards });
                         await sleep(5000);
                         continue;
                     }
@@ -185,7 +257,6 @@
 
                 const items = Array.isArray(data?.collection) ? data.collection : [];
                 if (items.length === 0) {
-                    // Fin de la collection atteinte
                     console.log(`[WM-Sync] 🏁 Fin de collection atteinte à la page ${page}.`);
                     break;
                 }
@@ -219,7 +290,7 @@
 
                 syncScanController.totalCards += formattedBatch.length;
 
-                // 2. Envoi direct du lot vers Supabase Hub
+                // Envoi direct du lot vers Supabase Hub
                 try {
                     await fetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
                         method: 'POST',
@@ -233,14 +304,23 @@
                     console.warn('[WM-Sync] Erreur push lot Supabase:', sbErr.message);
                 }
 
-                if (onProgress) onProgress({ status: 'running', page: page + 1, count: syncScanController.totalCards });
+                // Sauvegarde de l'avancement dans le localStorage pour survivre aux changements de page
+                saveScanSession({
+                    active: true,
+                    page: page + 1,
+                    totalCards: syncScanController.totalCards,
+                    username: myName,
+                    isPaused: false
+                });
 
-                // Si la page contenait moins de 50 cartes, on est à la toute fin
+                broadcastProgress({ status: 'running', page: page + 1, count: syncScanController.totalCards });
+
+                // Fin de la collection si la page a moins d'éléments que la taille max
                 if (items.length < PAGE_SIZE) break;
 
                 page++;
 
-                // ⏱️ DÉLAI STRICT DE 2 SECONDES ENTRE CHAQUE REQUÊTE demandé par l'utilisateur
+                // Délai sécurisé de 2 secondes entre chaque page
                 await sleep(2000);
             }
 
@@ -250,13 +330,25 @@
             }
 
             const isDone = !syncScanController.stopRequested;
+            saveScanSession(null); // Fin normale ou arrêtée -> nettoyage de la session
+
             console.log(`[WM-Sync] ✅ Fin de synchronisation (${syncScanController.totalCards} cartes au total).`);
-            if (onProgress) onProgress({ status: isDone ? 'done' : 'stopped', page, count: syncScanController.totalCards });
+            broadcastProgress({ status: isDone ? 'done' : 'stopped', page, count: syncScanController.totalCards });
+
+            if (isDone) {
+                if (typeof window.logToPanel === 'function') {
+                    window.logToPanel(`☁️ [Hub] Synchronisation terminée : ${syncScanController.totalCards} cartes envoyées !`);
+                }
+                if (typeof window.showToast === 'function') {
+                    window.showToast({ title: '☁️ Hub Supabase', body: `Collection synchronisée (${syncScanController.totalCards} cartes) !` });
+                }
+            }
 
             return { success: true, count: syncScanController.totalCards, stopped: syncScanController.stopRequested };
         } catch (err) {
             console.error('[WM-Sync] ❌ Échec global du scan de collection:', err);
-            if (onProgress) onProgress({ status: 'error', error: err.message, count: syncScanController.totalCards });
+            broadcastProgress({ status: 'error', error: err.message, count: syncScanController.totalCards });
+            saveScanSession(null);
             return { success: false, error: err.message };
         } finally {
             syncScanController.isRunning = false;
@@ -267,20 +359,26 @@
     function pauseCollectionSync() {
         if (syncScanController.isRunning) {
             syncScanController.isPaused = true;
+            const sess = getStoredSession();
+            if (sess) saveScanSession({ ...sess, isPaused: true });
+            broadcastProgress({ status: 'paused', page: syncScanController.currentPage, count: syncScanController.totalCards });
         }
     }
 
     function resumeCollectionSync() {
         if (syncScanController.isRunning && syncScanController.isPaused) {
             syncScanController.isPaused = false;
+            const sess = getStoredSession();
+            if (sess) saveScanSession({ ...sess, isPaused: false });
+            broadcastProgress({ status: 'running', page: syncScanController.currentPage, count: syncScanController.totalCards });
         }
     }
 
     function stopCollectionSync() {
-        if (syncScanController.isRunning) {
-            syncScanController.stopRequested = true;
-            syncScanController.isPaused = false;
-        }
+        syncScanController.stopRequested = true;
+        syncScanController.isPaused = false;
+        saveScanSession(null);
+        broadcastProgress({ status: 'stopped', page: syncScanController.currentPage, count: syncScanController.totalCards });
     }
 
     function getSyncState() {
@@ -397,6 +495,30 @@
         };
     }
 
+    // Détection et reprise automatique du scan en arrière-plan inter-pages
+    function checkAutoResumeBackgroundScan() {
+        const session = getStoredSession();
+        if (session && session.active && !session.isPaused && !session.stopped) {
+            const elapsed = Date.now() - (session.updatedAt || 0);
+            if (elapsed < 45000) {
+                console.log(`[WM-Sync] 🚀 Navigation détectée : reprise automatique du scan en arrière-plan (page ${session.page + 1}, ${session.totalCards} cartes)...`);
+                setTimeout(() => {
+                    if (!syncScanController.isRunning) {
+                        scanAndSyncCollection();
+                    }
+                }, 1200);
+            } else {
+                saveScanSession(null);
+            }
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkAutoResumeBackgroundScan);
+    } else {
+        checkAutoResumeBackgroundScan();
+    }
+
     // Exports robustes (contexte sandbox + contexte page unsafeWindow)
     const syncObj = {
         detectMyUsername,
@@ -405,6 +527,8 @@
         resumeCollectionSync,
         stopCollectionSync,
         getSyncState,
+        getStoredSession,
+        addProgressListener,
         pullAllCollections: pullAllCollectionsFromHub,
         calculateSynergies: calculateMultiAccountSynergies
     };
