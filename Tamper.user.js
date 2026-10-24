@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-Masters - GITHUB
 // @namespace    http://tampermonkey.net/
-// @version      11.3
+// @version      11.4
 // @description  WikiM Tools modulaire - Chargeur dynamique
 // @author       Nono / Askaat
 // @match        *://*.wiki-masters.com/*

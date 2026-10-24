@@ -389,6 +389,82 @@
      * Télécharge la collection de tous les autres comptes depuis Supabase
      * et l'enregistre dans IndexedDB (alts_collections)
      */
+    /**
+     * Synchronise immédiatement les cartes tirées d'un pack vers Supabase (Live Sync)
+     */
+    async function syncOpenedPackCards(cards) {
+        if (!Array.isArray(cards) || cards.length === 0) return;
+        const myName = await detectMyUsername();
+        if (!myName) return;
+
+        const formattedBatch = [];
+        cards.forEach(card => {
+            const cid = card.id || card.card_id;
+            const title = card.wikipedia_title || card.title;
+            const rarity = card.rarity || 'C';
+            const is_shiny = Boolean(card.is_shiny);
+            const category = card.category || '';
+            const image_url = card.image_url || '';
+
+            if (cid && title) {
+                formattedBatch.push({
+                    account_username: myName,
+                    card_id: String(cid),
+                    title: String(title),
+                    rarity: String(rarity),
+                    copies_count: 1,
+                    is_shiny: is_shiny,
+                    category: category,
+                    image_url: image_url,
+                    updated_at: new Date().toISOString()
+                });
+            }
+        });
+
+        if (formattedBatch.length === 0) return;
+
+        try {
+            await fetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
+                method: 'POST',
+                headers: {
+                    ...getHubHeaders(),
+                    'Prefer': 'resolution=merge-duplicates'
+                },
+                body: JSON.stringify(formattedBatch)
+            });
+            console.log(`[WM-Sync] 🎴 ${formattedBatch.length} carte(s) du pack synchronisée(s) en direct vers Supabase.`);
+        } catch(err) {
+            console.warn('[WM-Sync] Échec envoi live pack Supabase:', err);
+        }
+    }
+
+    /**
+     * Interroge Supabase pour compter exactement combien de cartes sont enregistrées pour ce compte
+     */
+    async function checkAccountSyncStatus(username = null) {
+        const user = username || await detectMyUsername();
+        if (!user) return { success: false, error: 'no_username' };
+
+        try {
+            const res = await fetch(`${SUPABASE_HUB_URL}/user_collections?account_username=eq.${encodeURIComponent(user)}&select=card_id`, {
+                method: 'HEAD',
+                headers: {
+                    'apikey': SUPABASE_HUB_KEY,
+                    'Authorization': `Bearer ${SUPABASE_HUB_KEY}`,
+                    'Prefer': 'count=exact'
+                }
+            });
+
+            const range = res.headers.get('Content-Range') || '';
+            const match = range.match(/\/(\d+)/);
+            const count = match ? parseInt(match[1], 10) : 0;
+
+            return { success: true, username: user, count };
+        } catch(e) {
+            return { success: false, error: e.message };
+        }
+    }
+
     async function pullAllCollectionsFromHub() {
         console.log('[WM-Sync] 📥 Récupération des collections multi-comptes depuis Supabase Hub...');
         try {
@@ -529,6 +605,8 @@
         getSyncState,
         getStoredSession,
         addProgressListener,
+        syncOpenedPackCards,
+        checkAccountSyncStatus,
         pullAllCollections: pullAllCollectionsFromHub,
         calculateSynergies: calculateMultiAccountSynergies
     };

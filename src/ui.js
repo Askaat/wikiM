@@ -260,6 +260,7 @@
                         <button id="wm-hub-sync-pause-btn" class="wm-panel-btn ghost" style="display:none; padding:6px 12px;">⏸️ Pause</button>
                         <button id="wm-hub-sync-stop-btn" class="wm-panel-btn danger" style="display:none; padding:6px 12px;">⏹️ Arrêter</button>
                         <button id="wm-hub-sync-pull-btn" class="wm-panel-btn ghost" style="flex:1;">📥 Tout actualiser</button>
+                        <button id="wm-hub-verify-btn" class="wm-panel-btn ghost" style="padding:6px 10px;" title="Vérifier le nombre de cartes enregistrées sur Supabase pour ce compte">🔍 Vérifier</button>
                     </div>
                     
                     <div id="wm-hub-sync-status" style="font-size:11px; font-family:monospace; color:#38bdf8; min-height:16px; margin-bottom:12px;">Prêt.</div>
@@ -632,6 +633,23 @@
                     if (hubStartBtn) { hubStartBtn.style.display = 'inline-flex'; hubStartBtn.textContent = '🚀 Re-scanner & Envoyer'; }
                     if (hubPauseBtn) hubPauseBtn.style.display = 'none';
                     if (hubStopBtn) hubStopBtn.style.display = 'none';
+                }
+            });
+        }
+
+        const hubVerifyBtn = document.getElementById('wm-hub-verify-btn');
+        if (hubVerifyBtn) {
+            hubVerifyBtn.addEventListener('click', async () => {
+                const sync = getSyncModule();
+                if (!sync || typeof sync.checkAccountSyncStatus !== 'function') return;
+                hubVerifyBtn.disabled = true;
+                if (hubStatus) hubStatus.textContent = '🔍 Interrogation de Supabase...';
+                const res = await sync.checkAccountSyncStatus();
+                hubVerifyBtn.disabled = false;
+                if (res && res.success) {
+                    if (hubStatus) hubStatus.textContent = `☁️ Supabase : ${res.count} carte(s) enregistrée(s) pour ${res.username} !`;
+                } else {
+                    if (hubStatus) hubStatus.textContent = `❌ Impossible de vérifier : ${res?.error || 'erreur inconnue'}`;
                 }
             });
         }

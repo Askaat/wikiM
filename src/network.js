@@ -207,6 +207,12 @@
                         const autoTagFn = window.processAutoTags || processAutoTags;
                         setTimeout(() => autoTagFn(data.cards, data.owned_copies), 1200);
                     }
+
+                    // 3. Synchronisation Cloud en direct vers Supabase Hub
+                    const syncMod = window.wmSync || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.wmSync : null);
+                    if (syncMod && typeof syncMod.syncOpenedPackCards === 'function') {
+                        syncMod.syncOpenedPackCards(data.cards);
+                    }
                 }
 
                 // Détection de la mise à jour du solde
