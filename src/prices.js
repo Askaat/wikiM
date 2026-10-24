@@ -26,6 +26,32 @@
                 for (const [k, v] of Object.entries(ts)) window.wmPriceTimestamps[k] = v;
             }
             console.log(`[WM-Price] ${Object.keys(window.wmPrices).length} prix chargés`);
+            // Complète la mémoire avec les données IndexedDB en tâche de fond
+            if (window.wmIDB) {
+                window.wmIDB.getAll(window.wmIDB.stores.PRICES).then(items => {
+                    if (Array.isArray(items)) {
+                        let added = 0;
+                        items.forEach(it => {
+                            if (it && it.key) {
+                                if (!window.wmPrices[it.key]) {
+                                    window.wmPrices[it.key] = it.value;
+                                    added++;
+                                }
+                                if (!window.wmPriceTimestamps[it.key]) {
+                                    window.wmPriceTimestamps[it.key] = it.timestamp;
+                                }
+                            }
+                        });
+                        if (added > 0) {
+                            console.log(`[WM-Price] 🚀 ${added} prix supplémentaires restaurés depuis IndexedDB`);
+                            // Guard : ne pas re-render si un scan de prix est en cours
+                            if (typeof window.renderPricesOnAllCards === 'function' && !window.wmPriceScanRunning) {
+                                window.renderPricesOnAllCards();
+                            }
+                        }
+                    }
+                }).catch(() => {});
+            }
         } catch (e) {
             console.warn('[WM-Price] Erreur chargement:', e);
         }
@@ -77,6 +103,17 @@
             if (uuid) existing[uuid] = Date.now();
             localStorage.setItem(WM_PRICE_TS_KEY, JSON.stringify(existing));
         } catch (e) { console.warn('[WM-Price] save ts échoué:', e); }
+
+        // Sauvegarde asynchrone non-bloquante dans IndexedDB
+        if (window.wmIDB) {
+            const now = Date.now();
+            if (title) {
+                window.wmIDB.put(window.wmIDB.stores.PRICES, { key: String(title).trim(), value: compressed, timestamp: now }).catch(() => {});
+            }
+            if (uuid) {
+                window.wmIDB.put(window.wmIDB.stores.PRICES, { key: uuid, value: compressed, timestamp: now }).catch(() => {});
+            }
+        }
     }
 
     /**

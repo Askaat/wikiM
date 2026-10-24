@@ -34,6 +34,8 @@
 
     const MODULES = [
         'src/state.js',
+        'src/db.js',
+        'src/sync.js',
         'src/styles.js',
         'src/utils.js',
         'src/network.js',

@@ -71,6 +71,10 @@
                     <span class="wm-tab-icon">🤝</span>
                     <span>Trade</span>
                 </button>
+                <button class="wm-tab" data-tab="hub">
+                    <span class="wm-tab-icon">☁️</span>
+                    <span>Hub</span>
+                </button>
                 <button class="wm-tab" data-tab="prefs">
                     <span class="wm-tab-icon">⚙️</span>
                     <span>Préfs</span>
@@ -237,6 +241,31 @@
                 </div>
             </div>
 
+            <div class="wm-tab-content hidden" data-tab="hub">
+                <div>
+                    <div class="wm-section-title">Synchronisation Cloud & Hub Multi-Comptes</div>
+                    <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">
+                        Scannez et synchronisez votre collection vers Supabase (délai sécurisé de 2s par page). Partagez instantanément entre comptes et repérez les doublons pour le succès <b>5 exemplaires</b>.
+                    </div>
+                    
+                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                        <button id="wm-hub-sync-start-btn" class="wm-panel-btn" style="flex:1;">🚀 Scanner & Envoyer</button>
+                        <button id="wm-hub-sync-pause-btn" class="wm-panel-btn ghost" style="display:none; padding:6px 12px;">⏸️ Pause</button>
+                        <button id="wm-hub-sync-stop-btn" class="wm-panel-btn danger" style="display:none; padding:6px 12px;">⏹️ Arrêter</button>
+                        <button id="wm-hub-sync-pull-btn" class="wm-panel-btn ghost" style="flex:1;">📥 Tout actualiser</button>
+                    </div>
+                    
+                    <div id="wm-hub-sync-status" style="font-size:11px; font-family:monospace; color:#38bdf8; min-height:16px; margin-bottom:12px;"></div>
+                </div>
+
+                <div>
+                    <div class="wm-section-title">🎯 Détecteur de Doublons Multi-Comptes (Succès 5x)</div>
+                    <div id="wm-hub-synergies-list" style="background:rgba(30,41,59,0.6); border:1px solid rgba(148,163,184,0.15); border-radius:8px; padding:8px; font-size:11px; max-height:220px; overflow-y:auto;">
+                        <div class="wm-tracked-empty">Cliquez sur 'Tout actualiser' pour charger les synergies.</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="wm-tab-content hidden" data-tab="patchnotes">
                 <div>
                     <div class="wm-section-title">Historique des mises à jour</div>
@@ -354,6 +383,149 @@
             });
             window.logToPanel('⚙️ Préférences sauvegardées');
         };
+        // --- LOGIQUE DU HUB SUPABASE & SUCCÈS 5X ---
+        const hubStartBtn = document.getElementById('wm-hub-sync-start-btn');
+        const hubPauseBtn = document.getElementById('wm-hub-sync-pause-btn');
+        const hubStopBtn = document.getElementById('wm-hub-sync-stop-btn');
+        const hubPullBtn = document.getElementById('wm-hub-sync-pull-btn');
+        const hubStatus = document.getElementById('wm-hub-sync-status');
+        const hubList = document.getElementById('wm-hub-synergies-list');
+
+        async function refreshHubSynergiesUI() {
+            if (!hubList) return;
+            hubList.innerHTML = '<div class="wm-tracked-empty">⏳ Calcul des synergies multi-comptes en cours...</div>';
+            try {
+                const res = typeof window.wmSync?.calculateSynergies === 'function'
+                    ? await window.wmSync.calculateSynergies()
+                    : { achievable5x: [], near5x: [], totalUniqueCardsTracked: 0 };
+
+                if (!res.achievable5x.length && !res.near5x.length) {
+                    hubList.innerHTML = '<div class="wm-tracked-empty">Aucune synergie de doublons détectée pour le moment. Synchronisez vos autres comptes pour voir les correspondances !</div>';
+                    return;
+                }
+
+                let html = '';
+                if (res.achievable5x.length > 0) {
+                    html += `<div style="font-weight:bold;color:#34d399;margin-bottom:6px;">🎉 Succès 5x Prêts à Débloquer (${res.achievable5x.length}) :</div>`;
+                    res.achievable5x.forEach(c => {
+                        const accountsDetail = Object.entries(c.byAccount).map(([acc, count]) => `${acc} (${count})`).join(', ');
+                        html += `
+                            <div style="background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:6px;margin-bottom:5px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-weight:700;color:#f8fafc;">${c.title}</span>
+                                    <span style="background:#10b981;color:#000;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;">${c.totalCopies} EX.</span>
+                                </div>
+                                <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Répartition : ${accountsDetail}</div>
+                            </div>
+                        `;
+                    });
+                }
+
+                if (res.near5x.length > 0) {
+                    html += `<div style="font-weight:bold;color:#fbbf24;margin-top:10px;margin-bottom:6px;">⚡ Proches du 5x [3 à 4 ex.] (${res.near5x.length}) :</div>`;
+                    res.near5x.forEach(c => {
+                        const accountsDetail = Object.entries(c.byAccount).map(([acc, count]) => `${acc} (${count})`).join(', ');
+                        html += `
+                            <div style="background:rgba(30,41,59,0.5);border:1px solid rgba(148,163,184,0.15);border-radius:6px;padding:6px;margin-bottom:5px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-weight:600;color:#cbd5e1;">${c.title}</span>
+                                    <span style="color:#fbbf24;font-weight:700;">${c.totalCopies} / 5</span>
+                                </div>
+                                <div style="font-size:10px;color:#64748b;margin-top:2px;">${accountsDetail}</div>
+                            </div>
+                        `;
+                    });
+                }
+
+                hubList.innerHTML = html;
+            } catch (err) {
+                hubList.innerHTML = `<div class="wm-tracked-empty" style="color:#f87171;">Erreur lors du calcul: ${err.message}</div>`;
+            }
+        }
+
+        if (hubStartBtn) {
+            hubStartBtn.addEventListener('click', async () => {
+                const sync = window.wmSync;
+                if (!sync) return;
+
+                const state = sync.getSyncState ? sync.getSyncState() : {};
+                if (state.isPaused) {
+                    sync.resumeCollectionSync();
+                    hubStartBtn.style.display = 'none';
+                    hubPauseBtn.style.display = 'inline-flex';
+                    hubPauseBtn.textContent = '⏸️ Pause';
+                    return;
+                }
+
+                hubStartBtn.style.display = 'none';
+                hubPauseBtn.style.display = 'inline-flex';
+                hubPauseBtn.textContent = '⏸️ Pause';
+                hubStopBtn.style.display = 'inline-flex';
+
+                await sync.scanAndSyncCollection((prog) => {
+                    if (!hubStatus) return;
+                    if (prog.status === 'running') {
+                        hubStatus.textContent = `⏳ Page ${prog.page} en cours... (${prog.count} cartes envoyées)`;
+                    } else if (prog.status === 'paused') {
+                        hubStatus.textContent = `⏸️ En pause à la page ${prog.page} (${prog.count} cartes)`;
+                    } else if (prog.status === 'rate_limited') {
+                        hubStatus.textContent = `⏳ Rate limit 429 détecté, attente 5s...`;
+                    } else if (prog.status === 'done') {
+                        hubStatus.textContent = `✅ Scan & Synchronisation terminés (${prog.count} cartes) !`;
+                    } else if (prog.status === 'stopped') {
+                        hubStatus.textContent = `⏹️ Scan interrompu (${prog.count} cartes synchronisées).`;
+                    } else if (prog.status === 'error') {
+                        hubStatus.textContent = `❌ Erreur : ${prog.error}`;
+                    }
+                });
+
+                hubStartBtn.style.display = 'inline-flex';
+                hubStartBtn.textContent = '🚀 Re-scanner & Envoyer';
+                hubPauseBtn.style.display = 'none';
+                hubStopBtn.style.display = 'none';
+                await refreshHubSynergiesUI();
+            });
+        }
+
+        if (hubPauseBtn) {
+            hubPauseBtn.addEventListener('click', () => {
+                const sync = window.wmSync;
+                if (!sync) return;
+                const state = sync.getSyncState();
+                if (state.isPaused) {
+                    sync.resumeCollectionSync();
+                    hubPauseBtn.textContent = '⏸️ Pause';
+                    if (hubStatus) hubStatus.textContent = '▶️ Reprise du scan...';
+                } else {
+                    sync.pauseCollectionSync();
+                    hubPauseBtn.textContent = '▶️ Reprendre';
+                    if (hubStatus) hubStatus.textContent = '⏸️ Scan mis en pause.';
+                }
+            });
+        }
+
+        if (hubStopBtn) {
+            hubStopBtn.addEventListener('click', () => {
+                if (window.wmSync?.stopCollectionSync) {
+                    window.wmSync.stopCollectionSync();
+                    if (hubStatus) hubStatus.textContent = '⏳ Arrêt demandé...';
+                }
+            });
+        }
+
+        if (hubPullBtn) {
+            hubPullBtn.addEventListener('click', async () => {
+                hubPullBtn.disabled = true;
+                if (hubStatus) hubStatus.textContent = '⏳ Récupération de tous les comptes...';
+                if (typeof window.wmSync?.pullAllCollections === 'function') {
+                    await window.wmSync.pullAllCollections();
+                }
+                hubPullBtn.disabled = false;
+                if (hubStatus) hubStatus.textContent = '✅ Collections multi-comptes à jour !';
+                await refreshHubSynergiesUI();
+            });
+        }
+
         ['wm-pref-browser', 'wm-pref-toast', 'wm-pref-sound', 'wm-pref-trigger', 'wm-pref-refresh'].forEach(id => {
             document.getElementById(id).addEventListener('change', savePrefsFromUI);
         });

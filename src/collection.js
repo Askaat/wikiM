@@ -277,6 +277,16 @@
             }
             wmBuildCardIdIndex();
             console.log(`[WM-Cache] ${window.wmCollectionCache.cards.length} cartes chargées`);
+            if (window.wmIDB) {
+                window.wmIDB.getAll(window.wmIDB.stores.COLLECTION).then(idbCards => {
+                    if (Array.isArray(idbCards) && idbCards.length > (window.wmCollectionCache.cards || []).length) {
+                        window.wmCollectionCache.cards = idbCards.map(it => it.raw || [it.id, it.card_id, it.title, it.rarity, it.category, it.atk, it.def, it.is_shiny, it.obtainIndex]);
+                        window.wmCollectionCache.ts = Date.now();
+                        wmBuildCardIdIndex();
+                        console.log(`[WM-Cache] 🚀 ${idbCards.length} cartes restaurées depuis IndexedDB`);
+                    }
+                }).catch(() => {});
+            }
         } catch (e) {
             console.warn('[WM-Cache] Erreur chargement:', e);
         }
@@ -286,6 +296,25 @@
         try {
             window.wmCollectionCache.ts = Date.now();
             localStorage.setItem(WM_COLLECTION_CACHE_KEY, JSON.stringify(window.wmCollectionCache));
+            // Sauvegarde dans IndexedDB (espace illimité)
+            if (window.wmIDB && Array.isArray(window.wmCollectionCache.cards)) {
+                const idbCards = window.wmCollectionCache.cards.map(entry => {
+                    const [id, card_id, title, rarity, category, atk, def, is_shiny, obtainIndex] = entry;
+                    return {
+                        id: String(id || card_id),
+                        card_id: String(card_id),
+                        title: String(title),
+                        rarity: String(rarity || 'C'),
+                        category: category || '',
+                        atk: atk ?? null,
+                        def: def ?? null,
+                        is_shiny: Boolean(is_shiny),
+                        obtainIndex: obtainIndex ?? 0,
+                        raw: entry
+                    };
+                });
+                window.wmIDB.bulkPut(window.wmIDB.stores.COLLECTION, idbCards).catch(() => {});
+            }
             if (typeof window.checkLocalStorageQuota === 'function') {
                 window.checkLocalStorageQuota();
             }
