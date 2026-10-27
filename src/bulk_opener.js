@@ -17,6 +17,7 @@
     // État global de l'ouverture en masse
     const openerState = {
         isRunning: false,
+        isStarting: false,     // Verrouillage synchrone immédiat au clic anti-double lancement
         isPausedForBot: false,
         stopRequested: false,
         targetCount: 0,
@@ -1058,8 +1059,16 @@
             }
 
             startBtn.addEventListener('click', () => {
-                if (openerState.isRunning) return;
+                if (openerState.isRunning || openerState.isStarting) return;
+                openerState.isStarting = true;
+                openerState.isRunning = true;
+                startBtn.disabled = true;
+                startBtn.textContent = '⏳ Lancement en cours...';
+                if (qtyInput) qtyInput.disabled = true;
+
                 const qty = parseInt(qtyInput.value, 10) || openerState.availablePacks;
+                updateStatusBanner('⏳ Préparation de l\'ouverture...', `${qty} paquet(s) prévus`, false, 0);
+
                 startBulkPackOpening(qty);
             });
 
@@ -1075,8 +1084,8 @@
             });
         }
 
-        // Mise à jour dynamique si la boucle ne tourne pas
-        if (!openerState.isRunning) {
+        // Mise à jour dynamique si la boucle ne tourne pas et qu'aucun lancement n'est en cours
+        if (!openerState.isRunning && !openerState.isStarting) {
             const prevAvailable = openerState.availablePacks;
             openerState.availablePacks = packInfo.count;
 
@@ -1195,20 +1204,11 @@
     }
 
     async function startBulkPackOpening(requestedCount) {
-        if (openerState.isRunning) return;
+        // Double vérification anti-concurrence
+        if (openerState.isRunning && !openerState.isStarting) return;
 
-        // S'assurer que les tags de l'utilisateur sont chargés pour l'auto-tagging
-        if ((!Array.isArray(window.wmTagsCache) || window.wmTagsCache.length === 0) && typeof window.wmFetchTags === 'function') {
-            try { await window.wmFetchTags(); } catch (e) {}
-        }
-
-        const totalToOpen = Math.max(1, Number(requestedCount) || 1);
         openerState.isRunning = true;
-        openerState.isPausedForBot = false;
-        openerState.stopRequested = false;
-        openerState.targetCount = totalToOpen;
-        openerState.openedCount = 0;
-        openerState.pulledCards = [];
+        openerState.isStarting = true;
         window._wmBulkOpeningActive = true;
         if (window.WikiM) window.WikiM.isBulkOpening = true;
 
@@ -1216,17 +1216,37 @@
         const stopBtn = document.getElementById('wm-bo-stop-btn');
         const qtyInput = document.getElementById('wm-bo-qty-input');
 
-        if (startBtn) startBtn.disabled = true;
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.textContent = '⏳ Préparation...';
+        }
         if (qtyInput) qtyInput.disabled = true;
-        if (stopBtn) {
-            stopBtn.style.display = 'inline-flex';
-            stopBtn.disabled = false;
-            stopBtn.textContent = '⏹️ Arrêter';
-        }
 
-        if (typeof window.logToPanel === 'function') {
-            window.logToPanel(`⚡ Démarrage du Bulk Pack Opener (${totalToOpen} paquet(s))...`);
-        }
+        try {
+            // S'assurer que les tags de l'utilisateur sont chargés pour l'auto-tagging
+            if ((!Array.isArray(window.wmTagsCache) || window.wmTagsCache.length === 0) && typeof window.wmFetchTags === 'function') {
+                updateStatusBanner('⏳ Chargement de vos tags en cours...', 'Préparation...', false, 0);
+                try { await window.wmFetchTags(); } catch (e) {}
+            }
+
+            const totalToOpen = Math.max(1, Number(requestedCount) || 1);
+            openerState.isPausedForBot = false;
+            openerState.stopRequested = false;
+            openerState.targetCount = totalToOpen;
+            openerState.openedCount = 0;
+            openerState.pulledCards = [];
+
+            if (stopBtn) {
+                stopBtn.style.display = 'inline-flex';
+                stopBtn.disabled = false;
+                stopBtn.textContent = '⏹️ Arrêter';
+            }
+
+            if (typeof window.logToPanel === 'function') {
+                window.logToPanel(`⚡ Démarrage du Bulk Pack Opener (${totalToOpen} paquet(s))...`);
+            }
+
+            openerState.isStarting = false; // Préparation terminée, la boucle d'ouverture prend le relais
 
         let currentPackIndex = 1;
         let networkRetryCount = 0; // Cap anti-boucle infinie sur erreur réseau (max 3 tentatives consécutives)
@@ -1388,15 +1408,18 @@
             }
         }
 
-        // --- FIN DE LA BOUCLE ---
-        openerState.isRunning = false;
-        openerState.isPausedForBot = false;
-        window._wmBulkOpeningActive = false;
-        if (window.WikiM) window.WikiM.isBulkOpening = false;
+        } finally {
+            // --- FIN DE LA BOUCLE GARANTIE ---
+            openerState.isRunning = false;
+            openerState.isStarting = false;
+            openerState.isPausedForBot = false;
+            window._wmBulkOpeningActive = false;
+            if (window.WikiM) window.WikiM.isBulkOpening = false;
 
-        if (stopBtn) stopBtn.style.display = 'none';
-        if (qtyInput) qtyInput.disabled = false;
-        syncBulkOpenerBarWithDOM();
+            if (stopBtn) stopBtn.style.display = 'none';
+            if (qtyInput) qtyInput.disabled = false;
+            syncBulkOpenerBarWithDOM();
+        }
 
         const finalMsg = openerState.stopRequested
             ? `⏹️ Ouverture interrompue (${openerState.openedCount} paquet(s) ouvert(s), ${openerState.pulledCards.length} cartes)`
