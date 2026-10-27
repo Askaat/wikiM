@@ -62,6 +62,14 @@
                     return null;
                 }
             }
+
+            // Auto-guérison : si la clé API a été polluée par un autre projet Supabase (ex: Hub), restaurer la clé officielle
+            if (data.apikey && (data.apikey.startsWith('sb_') || !data.apikey.includes(SUPABASE_REF))) {
+                console.warn('[WM] 🛡️ Clé API Supabase polluée détectée dans le cache, restauration immédiate de la clé officielle Wiki-Masters.');
+                data.apikey = SUPABASE_APIKEY_FALLBACK;
+                try { localStorage.setItem(WM_AUTH_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+            }
+
             return data;
         } catch(e) {
             return null;
@@ -70,8 +78,12 @@
 
     // Initialisation immédiate depuis le stockage persistant ou les fallbacks
     const persisted = loadPersistedAuth();
+    let currentApiKey = persisted?.apikey || SUPABASE_APIKEY_FALLBACK;
+    if (currentApiKey.startsWith('sb_') || !currentApiKey.includes(SUPABASE_REF)) {
+        currentApiKey = SUPABASE_APIKEY_FALLBACK;
+    }
     W.wmAuth = window.wmAuth = {
-        apikey: persisted?.apikey || SUPABASE_APIKEY_FALLBACK,
+        apikey: currentApiKey,
         token: cleanJwtToken(persisted?.token) || null,
         userId: persisted?.userId || null,
         ref: SUPABASE_REF
@@ -88,7 +100,8 @@
     W.fetch = async function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
         const opts = args[1] || {};
-        if (url.includes('supabase.co') && opts.headers) {
+        // Ne capturer l'auth Supabase QUE pour le Supabase officiel du jeu (SUPABASE_REF)
+        if (url.includes(SUPABASE_REF) && opts.headers) {
             const h = opts.headers;
             const apikey = h.apikey || h.Apikey || h['X-Api-Key'];
             const auth = h.Authorization || h.authorization;
@@ -258,9 +271,14 @@
             return originalFetch.apply(this, args);
         }
 
-        if (options.headers) {
+        const reqUrlStr = typeof url === 'string' ? url : (url?.url || '');
+        // Ne capturer l'auth que pour les requêtes visant expressément le Supabase officiel du jeu Wiki-Masters
+        if (options.headers && reqUrlStr.includes(SUPABASE_REF)) {
             const headers = new Headers(options.headers);
-            if (headers.has('apikey')) window.wmAuth.apikey = headers.get('apikey');
+            const candidateKey = headers.get('apikey');
+            if (candidateKey && candidateKey.includes(SUPABASE_REF)) {
+                window.wmAuth.apikey = candidateKey;
+            }
             if (headers.has('authorization')) {
                 const rawAuth = headers.get('authorization');
                 const cleanToken = cleanJwtToken(rawAuth);

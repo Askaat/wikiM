@@ -19,6 +19,15 @@
         };
     }
 
+    function nativeHubFetch(url, opts = {}) {
+        const fetchFn = (typeof unsafeWindow !== 'undefined' && unsafeWindow._wmNativeFetch)
+            || window._wmNativeFetch
+            || fetch;
+        const separator = url.includes('?') ? '&' : '?';
+        const safeUrl = `${url}${separator}wm_bypass=1`;
+        return fetchFn(safeUrl, opts);
+    }
+
     // Clés de persistance inter-pages pour le scan en arrière-plan
     const SCAN_SESSION_KEY = 'wm_sync_scan_session';
     const TAB_INSTANCE_ID = Math.random().toString(36).slice(2, 9);
@@ -192,7 +201,7 @@
 
         try {
             // Enregistrement du compte sur Supabase
-            await fetch(`${SUPABASE_HUB_URL}/accounts`, {
+            await nativeHubFetch(`${SUPABASE_HUB_URL}/accounts`, {
                 method: 'POST',
                 headers: {
                     ...getHubHeaders(),
@@ -292,7 +301,7 @@
 
                 // Envoi direct du lot vers Supabase Hub
                 try {
-                    await fetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
+                    await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
                         method: 'POST',
                         headers: {
                             ...getHubHeaders(),
@@ -424,7 +433,7 @@
         if (formattedBatch.length === 0) return;
 
         try {
-            await fetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
+            await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
                 method: 'POST',
                 headers: {
                     ...getHubHeaders(),
@@ -446,7 +455,7 @@
         if (!user) return { success: false, error: 'no_username' };
 
         try {
-            const res = await fetch(`${SUPABASE_HUB_URL}/user_collections?account_username=eq.${encodeURIComponent(user)}&select=card_id`, {
+            const res = await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?account_username=eq.${encodeURIComponent(user)}&select=card_id`, {
                 method: 'HEAD',
                 headers: {
                     'apikey': SUPABASE_HUB_KEY,
