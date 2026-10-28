@@ -971,6 +971,99 @@
         }
     }
 
+    // ============================================================
+    // 2. SYNCHRONISATION RPC DES PAQUETS & TIMER PÉRIODIQUE 10 MIN
+    // ============================================================
+    const PACK_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+    let packSyncTimer = null;
+
+    /**
+     * Interroge l'API Supabase officielle du jeu (RPC sync_profile_packs)
+     * pour récupérer le nombre exact de paquets disponibles sans dépendre du DOM.
+     */
+    async function fetchAvailablePacks(forceRPC = false) {
+        let rpcCount = null;
+        const auth = (window.W && window.W.wmAuth) || window.wmAuth || {};
+        let userId = auth.userId || window.wmUserId;
+
+        if (!userId && auth.token && typeof window.decodeJwt === 'function') {
+            const claims = window.decodeJwt(auth.token);
+            if (claims && claims.sub) userId = claims.sub;
+        }
+
+        if (userId && typeof window.supabaseRequest === 'function') {
+            try {
+                const data = await window.supabaseRequest('POST', '/rest/v1/rpc/sync_profile_packs', { user_id: userId });
+                if (data && typeof data.packs_remaining === 'number') {
+                    rpcCount = data.packs_remaining;
+                    openerState.availablePacks = rpcCount;
+                    updateNativePackCounterInDOM(rpcCount);
+
+                    if (typeof data.wikibidous_balance === 'number' && typeof window.recordBalance === 'function') {
+                        window.recordBalance(data.wikibidous_balance, 'passive');
+                    }
+
+                    console.log(`[WM-BulkOpener] 📦 Packs disponibles vérifiés via RPC : ${rpcCount}`);
+                    return rpcCount;
+                }
+            } catch (err) {
+                console.warn('[WM-BulkOpener] Échec sync_profile_packs RPC, repli DOM :', err.message);
+            }
+        }
+
+        // Fallback DOM si RPC non disponible
+        const domInfo = readAvailablePacksFromDOM();
+        if (domInfo) {
+            openerState.availablePacks = domInfo.count;
+            return domInfo.count;
+        }
+
+        return openerState.availablePacks;
+    }
+
+    /**
+     * Met à jour l'interface utilisateur de la barre Bulk Opener avec le nombre de paquets
+     */
+    function updateBulkOpenerUI(count = null) {
+        if (openerState.isRunning || openerState.isStarting) return;
+        const bar = document.getElementById('wm-bulk-opener-bar');
+        if (!bar) return;
+
+        const packCount = typeof count === 'number' ? count : openerState.availablePacks;
+        openerState.availablePacks = packCount;
+
+        const qtyInput = bar.querySelector('#wm-bo-qty-input');
+        const startBtn = bar.querySelector('#wm-bo-start-btn');
+
+        if (qtyInput && startBtn) {
+            qtyInput.max = String(Math.max(1, packCount));
+            if (!qtyInput.dataset.initialized || parseInt(qtyInput.value, 10) > packCount || parseInt(qtyInput.value, 10) === 0) {
+                qtyInput.value = String(Math.max(1, packCount));
+                qtyInput.dataset.initialized = 'true';
+            }
+            const selectedQty = Math.min(packCount, Math.max(1, parseInt(qtyInput.value, 10) || packCount));
+            startBtn.disabled = packCount <= 0;
+            startBtn.textContent = packCount > 0
+                ? `⚡ Ouvrir ${selectedQty === packCount ? 'tous les paquets' : 'les paquets'} (${selectedQty})`
+                : `⚡ Aucun paquet disponible (0)`;
+        }
+    }
+
+    /**
+     * Démarre ou réinitialise le timer de 10 minutes pour actualiser les paquets
+     */
+    function startPackSyncTimer() {
+        if (packSyncTimer) clearInterval(packSyncTimer);
+        console.log('[WM-BulkOpener] ⏱️ Timer de 10 minutes activé pour l\'actualisation des paquets.');
+        packSyncTimer = setInterval(async () => {
+            if (!openerState.isRunning && !openerState.isStarting && window.location.pathname.startsWith('/pulls')) {
+                console.log('[WM-BulkOpener] ⏰ Timer 10min expiré : vérification des paquets disponibles via RPC...');
+                const count = await fetchAvailablePacks(true);
+                updateBulkOpenerUI(count);
+            }
+        }, PACK_SYNC_INTERVAL_MS);
+    }
+
     function syncBulkOpenerBarWithDOM() {
         if (!window.location.pathname.startsWith('/pulls')) return;
 
@@ -1025,6 +1118,10 @@
                 document.body.appendChild(bar);
             }
 
+            // Chargement initial du nombre exact de paquets via RPC et démarrage du timer de 10 min
+            fetchAvailablePacks(true).then(count => updateBulkOpenerUI(count));
+            startPackSyncTimer();
+
             const qtyInput = bar.querySelector('#wm-bo-qty-input');
             const maxBtn = bar.querySelector('#wm-bo-qty-max-btn');
             const startBtn = bar.querySelector('#wm-bo-start-btn');
@@ -1058,15 +1155,31 @@
                 });
             }
 
-            startBtn.addEventListener('click', () => {
+            startBtn.addEventListener('click', async () => {
                 if (openerState.isRunning || openerState.isStarting) return;
                 openerState.isStarting = true;
                 openerState.isRunning = true;
                 startBtn.disabled = true;
-                startBtn.textContent = '⏳ Lancement en cours...';
+                startBtn.textContent = '⏳ Vérification des paquets...';
                 if (qtyInput) qtyInput.disabled = true;
 
-                const qty = parseInt(qtyInput.value, 10) || openerState.availablePacks;
+                updateStatusBanner('🔍 Vérification du nombre réel de paquets disponibles...', 'Attente RPC...', false, 0);
+
+                // 1. Requête RPC demandée par l'utilisateur pour s'assurer du nombre exact avant d'ouvrir
+                let realPacks = await fetchAvailablePacks(true);
+
+                if (typeof realPacks === 'number' && realPacks <= 0) {
+                    updateStatusBanner('❌ Aucun paquet disponible à ouvrir.', '0 paquet', false, 0);
+                    openerState.isStarting = false;
+                    openerState.isRunning = false;
+                    updateBulkOpenerUI(0);
+                    return;
+                }
+
+                // 2. Ajustement de la quantité demandée au nombre réellement disponible
+                let qty = parseInt(qtyInput.value, 10) || realPacks;
+                if (typeof realPacks === 'number' && qty > realPacks) qty = realPacks;
+
                 updateStatusBanner('⏳ Préparation de l\'ouverture...', `${qty} paquet(s) prévus`, false, 0);
 
                 startBulkPackOpening(qty);
@@ -1419,6 +1532,10 @@
             if (stopBtn) stopBtn.style.display = 'none';
             if (qtyInput) qtyInput.disabled = false;
             syncBulkOpenerBarWithDOM();
+
+            // Relance le timer de 10 minutes après l'ouverture et synchronise le solde final
+            startPackSyncTimer();
+            fetchAvailablePacks(true).then(count => updateBulkOpenerUI(count));
         }
 
         const finalMsg = openerState.stopRequested
