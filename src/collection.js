@@ -299,21 +299,37 @@
             // Sauvegarde dans IndexedDB (espace illimité)
             if (window.wmIDB && Array.isArray(window.wmCollectionCache.cards)) {
                 const idbCards = window.wmCollectionCache.cards.map(entry => {
-                    const [id, card_id, title, rarity, category, atk, def, is_shiny, obtainIndex] = entry;
-                    return {
-                        id: String(id || card_id),
-                        card_id: String(card_id),
-                        title: String(title),
-                        rarity: String(rarity || 'C'),
-                        category: category || '',
-                        atk: atk ?? null,
-                        def: def ?? null,
-                        is_shiny: Boolean(is_shiny),
-                        obtainIndex: obtainIndex ?? 0,
-                        raw: entry
-                    };
-                });
-                window.wmIDB.bulkPut(window.wmIDB.stores.COLLECTION, idbCards).catch(() => {});
+                    if (Array.isArray(entry)) {
+                        const [id, card_id, title, rarity, category, atk, def, is_shiny, obtainIndex] = entry;
+                        return {
+                            id: String(id || card_id || ''),
+                            card_id: String(card_id || id || ''),
+                            userCardId: String(id || ''),
+                            title: String(title || ''),
+                            rarity: String(rarity || 'C'),
+                            category: category || '',
+                            atk: atk ?? null,
+                            def: def ?? null,
+                            is_shiny: Boolean(is_shiny),
+                            obtainIndex: obtainIndex ?? 0,
+                            raw: entry
+                        };
+                    } else if (entry && typeof entry === 'object') {
+                        return {
+                            id: String(entry.id || entry.ucId || entry.card_id || ''),
+                            card_id: String(entry.id || entry.card_id || ''),
+                            userCardId: String(entry.ucId || entry.userCardId || ''),
+                            title: String(entry.t || entry.title || ''),
+                            rarity: String(entry.r || entry.rarity || 'C'),
+                            category: entry.c || entry.category || '',
+                            raw: entry
+                        };
+                    }
+                    return null;
+                }).filter(Boolean);
+                if (idbCards.length > 0) {
+                    window.wmIDB.bulkPut(window.wmIDB.stores.COLLECTION, idbCards).catch(() => {});
+                }
             }
             if (typeof window.checkLocalStorageQuota === 'function') {
                 window.checkLocalStorageQuota();

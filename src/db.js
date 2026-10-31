@@ -199,20 +199,34 @@
                     const colObj = JSON.parse(rawCol);
                     if (Array.isArray(colObj.cards) && colObj.cards.length > 0) {
                         const colItems = colObj.cards.map(c => {
-                            const [id, card_id, title, rarity, category, atk, def, is_shiny, obtainIndex] = c;
-                            return {
-                                id: String(id || card_id),
-                                card_id: String(card_id),
-                                title: String(title),
-                                rarity: String(rarity || 'C'),
-                                category: category || '',
-                                atk: atk ?? null,
-                                def: def ?? null,
-                                is_shiny: Boolean(is_shiny),
-                                obtainIndex: obtainIndex ?? 0,
-                                raw: c
-                            };
-                        });
+                            if (Array.isArray(c)) {
+                                const [id, card_id, title, rarity, category, atk, def, is_shiny, obtainIndex] = c;
+                                return {
+                                    id: String(id || card_id || ''),
+                                    card_id: String(card_id || id || ''),
+                                    userCardId: String(id || ''),
+                                    title: String(title || ''),
+                                    rarity: String(rarity || 'C'),
+                                    category: category || '',
+                                    atk: atk ?? null,
+                                    def: def ?? null,
+                                    is_shiny: Boolean(is_shiny),
+                                    obtainIndex: obtainIndex ?? 0,
+                                    raw: c
+                                };
+                            } else if (c && typeof c === 'object') {
+                                return {
+                                    id: String(c.id || c.ucId || c.card_id || ''),
+                                    card_id: String(c.id || c.card_id || ''),
+                                    userCardId: String(c.ucId || c.userCardId || ''),
+                                    title: String(c.t || c.title || ''),
+                                    rarity: String(c.r || c.rarity || 'C'),
+                                    category: c.c || c.category || '',
+                                    raw: c
+                                };
+                            }
+                            return null;
+                        }).filter(Boolean);
                         const count = await idbBulkPut(STORES.COLLECTION, colItems);
                         console.log(`[WM-IDB] 🎴 ${count} cartes de collection migrées vers IndexedDB.`);
                     }
