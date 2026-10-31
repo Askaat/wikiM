@@ -5,6 +5,7 @@
  */
 (function(window, WikiM) {
     'use strict';
+    console.log('[WM-Sync] 🚀 Module Sync v12.0 actif (requêtes Supabase nettoyées)');
 
     // Clés de configuration pour le hub Supabase
     const SUPABASE_HUB_URL = 'https://mlofooobbcxrmovcvmss.supabase.co/rest/v1';

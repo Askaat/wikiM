@@ -284,6 +284,13 @@
         const url = args[0] instanceof Request ? args[0].url : args[0];
         const options = args[1] || {};
 
+        // Sécurité anti-PGRST100 : PostgREST rejette tout paramètre custom comme wm_bypass=1
+        if (typeof url === 'string' && url.includes('supabase.co') && url.includes('wm_bypass=')) {
+            const cleanUrl = url.replace('?wm_bypass=1', '?').replace('&wm_bypass=1', '').replace('?&', '?').replace(/\?$/, '');
+            args[0] = cleanUrl;
+            return originalFetch.apply(this, args);
+        }
+
         // Contournement immédiat pour les sous-requêtes internes du script (ex: multi-comptes)
         if (typeof url === 'string' && (url.includes('wm_bypass=1') || url.includes('wm_internal=1'))) {
             return originalFetch.apply(this, args);
