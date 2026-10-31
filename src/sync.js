@@ -23,9 +23,7 @@
         const fetchFn = (typeof unsafeWindow !== 'undefined' && unsafeWindow._wmNativeFetch)
             || window._wmNativeFetch
             || fetch;
-        const separator = url.includes('?') ? '&' : '?';
-        const safeUrl = `${url}${separator}wm_bypass=1`;
-        return fetchFn(safeUrl, opts);
+        return fetchFn(url, opts);
     }
 
     // Clés de persistance inter-pages pour le scan en arrière-plan
