@@ -160,6 +160,29 @@
         return null;
     }
 
+    /**
+     * S'assure que le compte existe dans la table 'accounts' de Supabase
+     * pour respecter la contrainte de clé étrangère (user_collections_account_username_fkey).
+     */
+    async function ensureAccountExists(username) {
+        if (!username) return;
+        try {
+            await nativeHubFetch(`${SUPABASE_HUB_URL}/accounts?on_conflict=username`, {
+                method: 'POST',
+                headers: {
+                    ...getHubHeaders(),
+                    'Prefer': 'resolution=merge-duplicates'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    updated_at: new Date().toISOString()
+                })
+            });
+        } catch(e) {
+            console.warn('[WM-Sync] Note sur enregistrement compte:', e);
+        }
+    }
+
     async function scanAndSyncCollection(onProgress = null) {
         if (onProgress) addProgressListener(onProgress);
 
@@ -215,17 +238,7 @@
 
         try {
             // Enregistrement du compte sur Supabase
-            await nativeHubFetch(`${SUPABASE_HUB_URL}/accounts`, {
-                method: 'POST',
-                headers: {
-                    ...getHubHeaders(),
-                    'Prefer': 'resolution=merge-duplicates'
-                },
-                body: JSON.stringify({
-                    username: myName,
-                    updated_at: new Date().toISOString()
-                })
-            }).catch(() => {});
+            await ensureAccountExists(myName);
 
             const PAGE_SIZE = 50;
             const MAX_PAGES = 500;
@@ -498,6 +511,7 @@
         // 3. Sauvegarde cloud Supabase
         if (formattedBatch.length > 0) {
             try {
+                await ensureAccountExists(myName);
                 await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
                     method: 'POST',
                     headers: {
