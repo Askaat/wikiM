@@ -98,13 +98,28 @@
 
         // 2. Variable globale window ou unsafeWindow
         const targetWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-        const glob = targetWin.wmUsername || window.wmUsername || targetWin.W?.wmUsername || window.W?.wmUsername;
+        const glob = targetWin.wmUsername || window.wmUsername || targetWin.W?.wmUsername || window.W?.wmUsername || targetWin.W?.wmAuth?.username || window.wmAuth?.username;
         if (glob && typeof glob === 'string' && glob.trim()) {
             localStorage.setItem('wmMyUsername', glob.trim());
             return glob.trim();
         }
 
-        // 3. Inspection du DOM pour les liens de profil
+        // 3. Décodage du token JWT de session du jeu (source la plus fiable)
+        try {
+            const auth = targetWin.W?.wmAuth || window.wmAuth || targetWin.wmAuth || {};
+            const token = auth.token;
+            if (token && typeof window.decodeJwt === 'function') {
+                const claims = window.decodeJwt(token);
+                const u = claims?.user_metadata?.username || claims?.username;
+                if (u && typeof u === 'string' && u.trim()) {
+                    localStorage.setItem('wmMyUsername', u.trim());
+                    console.log(`[WM-Sync] 👤 Pseudo détecté via le token JWT : ${u.trim()}`);
+                    return u.trim();
+                }
+            }
+        } catch(e) {}
+
+        // 4. Inspection du DOM pour les liens de profil
         try {
             const profileLinks = document.querySelectorAll('a[href*="/profile/"]');
             for (const a of profileLinks) {
@@ -121,7 +136,7 @@
             }
         } catch(e) {}
 
-        // 4. Fallback sur /api/friends
+        // 5. Fallback sur /api/friends
         try {
             const res = await fetch('/api/friends', { credentials: 'include' });
             if (res.ok) {
@@ -451,24 +466,70 @@
      * Interroge Supabase pour compter exactement combien de cartes sont enregistrées pour ce compte
      */
     async function checkAccountSyncStatus(username = null) {
-        const user = username || await detectMyUsername();
+        let user = (username || '').trim();
+        if (!user) {
+            user = (typeof document !== 'undefined' && document.getElementById('wm-hub-username-input')?.value || '').trim()
+                || localStorage.getItem('wmMyUsername')
+                || await detectMyUsername();
+        }
         if (!user) return { success: false, error: 'no_username' };
 
         try {
-            const res = await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?account_username=eq.${encodeURIComponent(user)}&select=card_id`, {
-                method: 'HEAD',
-                headers: {
-                    'apikey': SUPABASE_HUB_KEY,
-                    'Authorization': `Bearer ${SUPABASE_HUB_KEY}`,
-                    'Prefer': 'count=exact'
+            const headers = {
+                'apikey': SUPABASE_HUB_KEY,
+                'Authorization': `Bearer ${SUPABASE_HUB_KEY}`,
+                'Prefer': 'count=exact'
+            };
+
+            // 1. Requête insensible à la casse (ilike)
+            const res = await nativeHubFetch(
+                `${SUPABASE_HUB_URL}/user_collections?account_username=ilike.${encodeURIComponent(user)}&select=account_username&limit=1`,
+                { method: 'GET', headers }
+            );
+
+            let range = res.headers.get('Content-Range') || '';
+            let match = range.match(/\/(\d+)/);
+            let count = match ? parseInt(match[1], 10) : 0;
+            let matchedUser = user;
+
+            if (count > 0) {
+                try {
+                    const data = await res.json();
+                    if (Array.isArray(data) && data[0]?.account_username) {
+                        matchedUser = data[0].account_username;
+                    }
+                } catch(e) {}
+            } else {
+                // 2. Si 0 résultat, tentative avec recherche wildcard (ex: 'Askaat' -> '420askaat')
+                const resWildcard = await nativeHubFetch(
+                    `${SUPABASE_HUB_URL}/user_collections?account_username=ilike.*${encodeURIComponent(user)}*&select=account_username&limit=1`,
+                    { method: 'GET', headers }
+                );
+                const wRange = resWildcard.headers.get('Content-Range') || '';
+                const wMatch = wRange.match(/\/(\d+)/);
+                const wCount = wMatch ? parseInt(wMatch[1], 10) : 0;
+
+                if (wCount > 0) {
+                    try {
+                        const wData = await resWildcard.json();
+                        if (Array.isArray(wData) && wData[0]?.account_username) {
+                            matchedUser = wData[0].account_username;
+                            count = wCount;
+                        }
+                    } catch(e) {}
                 }
-            });
+            }
 
-            const range = res.headers.get('Content-Range') || '';
-            const match = range.match(/\/(\d+)/);
-            const count = match ? parseInt(match[1], 10) : 0;
+            // Si un compte a été résolu avec succès, synchroniser automatiquement le nom canonique
+            if (matchedUser && count > 0) {
+                localStorage.setItem('wmMyUsername', matchedUser);
+                const targetWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                targetWin.wmUsername = matchedUser;
+                const inputEl = typeof document !== 'undefined' ? document.getElementById('wm-hub-username-input') : null;
+                if (inputEl) inputEl.value = matchedUser;
+            }
 
-            return { success: true, username: user, count };
+            return { success: true, username: matchedUser, count };
         } catch(e) {
             return { success: false, error: e.message };
         }

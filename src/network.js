@@ -35,6 +35,7 @@
                 apikey: authData.apikey || SUPABASE_APIKEY_FALLBACK,
                 token: cleanToken,
                 userId: authData.userId || null,
+                username: authData.username || W.wmUsername || window.wmUsername || null,
                 ref: SUPABASE_REF,
                 savedAt: Date.now()
             };
@@ -86,11 +87,16 @@
         apikey: currentApiKey,
         token: cleanJwtToken(persisted?.token) || null,
         userId: persisted?.userId || null,
+        username: persisted?.username || null,
         ref: SUPABASE_REF
     };
     if (W.wmAuth.userId) {
         W.wmUserId = window.wmUserId = W.wmAuth.userId;
         console.log('[WM] ⚡ Authentification restaurée instantanément depuis le stockage local (userId:', W.wmUserId, ')');
+    }
+    if (W.wmAuth.username) {
+        W.wmUsername = window.wmUsername = W.wmAuth.username;
+        try { localStorage.setItem('wmMyUsername', W.wmAuth.username); } catch(e) {}
     }
 
     if (!W._wmNativeFetch) {
@@ -119,8 +125,14 @@
                         W.wmAuth.token = candidate;
                         W.wmAuth.userId = claims.sub;
                         W.wmUserId = window.wmUserId = claims.sub;
+                        const uName = claims.user_metadata?.username || claims.username;
+                        if (uName) {
+                            W.wmAuth.username = uName;
+                            W.wmUsername = window.wmUsername = uName;
+                            try { localStorage.setItem('wmMyUsername', uName); } catch(e) {}
+                        }
                         savePersistedAuth(W.wmAuth);
-                        console.log('[WM] Token utilisateur capturé & persisté, userId:', claims.sub);
+                        console.log('[WM] Token utilisateur capturé & persisté, userId:', claims.sub, 'username:', uName);
                     }
                 }
             }
@@ -149,12 +161,18 @@
                 const newUserId = claims?.sub || session.user?.id || null;
 
                 // Si les données ont changé ou étaient absentes
-                if (W.wmAuth.token !== newToken || W.wmAuth.userId !== newUserId) {
+                const cookieUsername = claims?.user_metadata?.username || session.user?.user_metadata?.username || claims?.username || null;
+                if (W.wmAuth.token !== newToken || W.wmAuth.userId !== newUserId || (cookieUsername && W.wmAuth.username !== cookieUsername)) {
                     W.wmAuth.token = newToken;
                     W.wmAuth.userId = newUserId;
                     W.wmUserId = window.wmUserId = W.wmAuth.userId;
+                    if (cookieUsername) {
+                        W.wmAuth.username = cookieUsername;
+                        W.wmUsername = window.wmUsername = cookieUsername;
+                        try { localStorage.setItem('wmMyUsername', cookieUsername); } catch(e) {}
+                    }
                     savePersistedAuth(W.wmAuth);
-                    console.log('[WM] Token extrait des cookies & persisté, userId:', W.wmUserId);
+                    console.log('[WM] Token extrait des cookies & persisté, userId:', W.wmUserId, 'username:', cookieUsername);
                 }
                 return true;
             }
@@ -288,6 +306,13 @@
                         window.wmAuth.token = cleanToken;
                         window.wmAuth.userId = claims.sub;
                         window.wmUserId = claims.sub;
+                        const uName = claims.user_metadata?.username || claims.username;
+                        if (uName) {
+                            window.wmAuth.username = uName;
+                            window.wmUsername = uName;
+                            if (W) { W.wmUsername = uName; if (W.wmAuth) W.wmAuth.username = uName; }
+                            try { localStorage.setItem('wmMyUsername', uName); } catch(e) {}
+                        }
                         savePersistedAuth(window.wmAuth);
                     }
                 }

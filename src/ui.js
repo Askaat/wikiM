@@ -642,12 +642,18 @@
             hubVerifyBtn.addEventListener('click', async () => {
                 const sync = getSyncModule();
                 if (!sync || typeof sync.checkAccountSyncStatus !== 'function') return;
+                const inputVal = (hubUserInput?.value || '').trim();
                 hubVerifyBtn.disabled = true;
                 if (hubStatus) hubStatus.textContent = '🔍 Interrogation de Supabase...';
-                const res = await sync.checkAccountSyncStatus();
+                const res = await sync.checkAccountSyncStatus(inputVal || null);
                 hubVerifyBtn.disabled = false;
                 if (res && res.success) {
-                    if (hubStatus) hubStatus.textContent = `☁️ Supabase : ${res.count} carte(s) enregistrée(s) pour ${res.username} !`;
+                    if (hubUserInput && res.username) hubUserInput.value = res.username;
+                    if (res.count > 0) {
+                        if (hubStatus) hubStatus.textContent = `☁️ Supabase : ${res.count} carte(s) enregistrée(s) pour ${res.username} !`;
+                    } else {
+                        if (hubStatus) hubStatus.textContent = `ℹ️ Supabase : aucune carte trouvée pour "${res.username}". Cliquez sur "Scanner & Envoyer".`;
+                    }
                 } else {
                     if (hubStatus) hubStatus.textContent = `❌ Impossible de vérifier : ${res?.error || 'erreur inconnue'}`;
                 }
