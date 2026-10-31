@@ -414,22 +414,37 @@
      */
     /**
      * Synchronise immédiatement les cartes tirées d'un pack vers Supabase (Live Sync)
+     * ET vers la base locale IndexedDB (my_collection)
      */
-    async function syncOpenedPackCards(cards) {
+    async function syncOpenedPackCards(cards, ownedCopies = []) {
         if (!Array.isArray(cards) || cards.length === 0) return;
         const myName = await detectMyUsername();
-        if (!myName) return;
+        if (!myName) {
+            console.warn('[WM-Sync] ⚠️ Impossible de synchroniser le pack : nom d\'utilisateur inconnu.');
+            return;
+        }
+
+        const idMap = new Map();
+        if (Array.isArray(ownedCopies)) {
+            ownedCopies.forEach(copy => {
+                if (copy.card_id && copy.id) idMap.set(copy.card_id, copy.id);
+            });
+        }
 
         const formattedBatch = [];
-        cards.forEach(card => {
+        const idbItems = [];
+
+        cards.forEach((card, idx) => {
             const cid = card.id || card.card_id;
             const title = card.wikipedia_title || card.title;
             const rarity = card.rarity || 'C';
             const is_shiny = Boolean(card.is_shiny);
             const category = card.category || '';
             const image_url = card.image_url || '';
+            const physicalId = idMap.get(cid) || card.user_card_id || card.id;
 
             if (cid && title) {
+                // Lot Supabase Cloud
                 formattedBatch.push({
                     account_username: myName,
                     card_id: String(cid),
@@ -441,23 +456,60 @@
                     image_url: image_url,
                     updated_at: new Date().toISOString()
                 });
+
+                // Lot IndexedDB local
+                idbItems.push({
+                    id: String(physicalId || cid),
+                    card_id: String(cid),
+                    userCardId: String(physicalId || ''),
+                    title: String(title),
+                    rarity: String(rarity),
+                    category: category,
+                    atk: card.atk ?? null,
+                    def: card.def ?? null,
+                    is_shiny: is_shiny,
+                    obtainIndex: idx,
+                    raw: {
+                        id: String(cid),
+                        ucId: String(physicalId || ''),
+                        t: String(title),
+                        r: String(rarity),
+                        c: category
+                    }
+                });
             }
         });
 
-        if (formattedBatch.length === 0) return;
+        // 1. Sauvegarde locale IndexedDB
+        if (window.wmIDB && idbItems.length > 0) {
+            try {
+                await window.wmIDB.bulkPut(window.wmIDB.stores.COLLECTION, idbItems);
+                console.log(`[WM-Sync] 💾 ${idbItems.length} carte(s) du pack enregistrée(s) dans IndexedDB.`);
+            } catch(e) {}
+        }
 
-        try {
-            await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
-                method: 'POST',
-                headers: {
-                    ...getHubHeaders(),
-                    'Prefer': 'resolution=merge-duplicates'
-                },
-                body: JSON.stringify(formattedBatch)
-            });
-            console.log(`[WM-Sync] 🎴 ${formattedBatch.length} carte(s) du pack synchronisée(s) en direct vers Supabase.`);
-        } catch(err) {
-            console.warn('[WM-Sync] Échec envoi live pack Supabase:', err);
+        // 2. Ingestion dans le cache mémoire si disponible
+        if (typeof window.ingestCollectionData === 'function') {
+            try {
+                window.ingestCollectionData(cards);
+            } catch(e) {}
+        }
+
+        // 3. Sauvegarde cloud Supabase
+        if (formattedBatch.length > 0) {
+            try {
+                await nativeHubFetch(`${SUPABASE_HUB_URL}/user_collections?on_conflict=account_username,card_id,rarity,is_shiny`, {
+                    method: 'POST',
+                    headers: {
+                        ...getHubHeaders(),
+                        'Prefer': 'resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify(formattedBatch)
+                });
+                console.log(`[WM-Sync] 🎴 ${formattedBatch.length} carte(s) du pack synchronisée(s) en direct vers Supabase pour ${myName}.`);
+            } catch(err) {
+                console.warn('[WM-Sync] Échec envoi live pack Supabase:', err);
+            }
         }
     }
 

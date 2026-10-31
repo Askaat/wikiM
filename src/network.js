@@ -239,10 +239,10 @@
                         setTimeout(() => autoTagFn(data.cards, data.owned_copies), 1200);
                     }
 
-                    // 3. Synchronisation Cloud en direct vers Supabase Hub
+                    // 3. Synchronisation Cloud en direct vers Supabase Hub & IndexedDB
                     const syncMod = window.wmSync || (typeof unsafeWindow !== 'undefined' ? unsafeWindow.wmSync : null);
                     if (syncMod && typeof syncMod.syncOpenedPackCards === 'function') {
-                        syncMod.syncOpenedPackCards(data.cards);
+                        syncMod.syncOpenedPackCards(data.cards, data.owned_copies);
                     }
                 }
 
